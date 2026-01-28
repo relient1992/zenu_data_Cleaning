@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Daryl T Roallos | Photographer</title>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --text: #fff;
+      --bg: #000;
+      --overlay: rgba(0,0,0,0.45);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Inter', sans-serif;
+      background: #111;
+      color: var(--text);
+    }
+    header {
+      position: fixed;
+      width: 100%;
+      top: 0;
+      left: 0;
+      z-index: 10;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 20px 8vw;
+      background: rgba(0,0,0,0.4);
+      backdrop-filter: blur(6px);
+    }
+    header h1 {
+      font-size: 18px;
+      font-weight: 500;
+    }
+    nav a {
+      color: #fff;
+      text-decoration: none;
+      margin-left: 24px;
+      font-size: 14px;
+    }
+    .hero {
+      height: 100vh;
+      background: url('YOUR_GDRIVE_HERO_IMAGE') center/cover no-repeat;
+      position: relative;
+      display: flex;
+      align-items: center;
+      padding: 0 8vw;
+    }
+    .hero::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: var(--overlay);
+    }
+    .hero-content {
+      position: relative;
+      max-width: 600px;
+    }
+    .hero h2 {
+      font-family: 'Playfair Display', serif;
+      font-size: 56px;
+      margin: 0 0 12px;
+    }
+    .hero p {
+      font-size: 16px;
+      margin-bottom: 24px;
+    }
+    .btn {
+      display: inline-block;
+      padding: 12px 26px;
+      border: 1px solid #fff;
+      color: #fff;
+      text-decoration: none;
+      font-size: 14px;
+    }
+    section {
+      padding: 100px 8vw;
+      background: #111;
+    }
+    section h3 {
+      font-family: 'Playfair Display', serif;
+      font-size: 36px;
+      margin-bottom: 40px;
+      text-align: center;
+    }
+    .portfolio-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+    }
+    .portfolio-grid img {
+      width: 100%;
+      height: 280px;
+      object-fit: cover;
+      opacity: 0;
+      transform: translateY(20px);
+      transition: all .6s ease;
+    }
+    .portfolio-grid img.loaded {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    footer {
+      text-align: center;
+      padding: 40px;
+      font-size: 14px;
+      color: #aaa;
+    }
+    @media (max-width: 768px) {
+      .hero h2 { font-size: 40px; }
+      header { padding: 16px 6vw; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Daryl T Roallos</h1>
+  <nav>
+    <a href="#home">Home</a>
+    <a href="#portfolio">Portfolio</a>
+  </nav>
+</header>
+
+<section class="hero" id="home">
+  <div class="hero-content">
+    <h2>Daryl T Roallos</h2>
+    <p>Photographer</p>
+    <a class="btn" href="#portfolio">View Portfolio</a>
+  </div>
+</section>
+
+<section id="portfolio">
+  <h3>Portfolio</h3>
+  <div class="portfolio-grid" id="gallery"></div>
+</section>
+
+<footer>
+  © 2026 Daryl T Roallos · Photography Portfolio
+</footer>
+
+<script>
+const images = [
+  'https://drive.google.com/uc?id=1mFjqoLGCCAWudP7QQ8HrZN1jrITThyfZ'
+];
+
+const gallery = document.getElementById('gallery');
+const initialLoad = 5;
+let index = 0;
+
+function loadImage(src) {
+  const img = document.createElement('img');
+  img.src = src;
+  img.loading = 'lazy';
+  img.onload = () => img.classList.add('loaded');
+  gallery.appendChild(img);
+}
+
+images.slice(0, initialLoad).forEach(loadImage);
+index = initialLoad;
+
+window.addEventListener('scroll', () => {
+  if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 300) {
+    for (let i = 0; i < 3 && index < images.length; i++, index++) {
+      loadImage(images[index]);
+    }
+  }
+});
+</script>
+
+</body>
+</html>

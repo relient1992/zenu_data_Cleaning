@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Processing Suite</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <link rel="stylesheet" href="css/style.css">
+
+</head>
+<body>
+    <div class="container">
+        <h1>Zenu Data Processing</h1>
+
+        <div class="phase-toggle">
+            <input type="radio" id="phase1" name="phase" checked onchange="togglePhase('phase1')">
+            <label for="phase1">Phase 1: Clean & Map Data</label>
+            <input type="radio" id="phase2" name="phase" onchange="togglePhase('phase2')">
+            <label for="phase2">Phase 2: Fill a Template</label>
+        </div>
+
+        <div id="phase1Container">
+            <div id="uploadSection">
+                <h2>Step 1: Upload Your Data File</h2>
+                <div class="control-group">
+                    <label for="dataFile">Upload CSV or XLSX File:</label>
+                    <input type="file" id="dataFile" accept=".csv, .xlsx, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel">
+                </div>
+            </div>
+            <div id="sheetSelectorSection" class="control-group hidden">
+                <label for="sheetSelector">Select a Sheet:</label>
+                <select id="sheetSelector"></select>
+            </div>
+            
+            <div id="mappingContainer" class="hidden">
+                <h2>Step 2: Map Your Headers</h2>
+                <div class="control-group">
+                    <label for="dataTypeSelector">Select Data Type:</label>
+                    <select id="dataTypeSelector">
+                        <option value="contact">Contact</option>
+                        <option value="property">Property</option>
+                    </select>
+                    <button id="addIdButton" class="action-btn">Add 'Generate ID' Field</button>
+                </div>
+                
+                <table id="mappingTable">
+                    <thead><tr><th>Your File's Header</th><th>Destination Header</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+                
+                <div id="downloadSection">
+                    <h2>Step 3: Validate & Process</h2>
+                    <div class="control-group">
+                        <button id="processButton">Validate and Process File</button>
+                    </div>
+                </div>
+                
+                <div id="validationErrorsSection" class="hidden">
+                    <div class="error-info">
+                        <h3>⚠️ Validation Errors Found</h3>
+                        <p>Edit values below and click "Save & Re-Validate", or download the list to fix offline.</p>
+                        <div id="errorList" class="error-list"></div>
+                        <div>
+                            <button id="saveErrorsButton" class="action-btn">Save Changes & Re-Validate</button>
+                            <button id="downloadErrorsButton" class="secondary">Download Invalid Rows as CSV</button>
+                            <button id="forceSaveButton" class="secondary" style="display:none;">Force Save with Remarks</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="phase2Container" class="hidden">
+            <h2>Fill a Template with Your Data</h2>
+            <div class="info"><p>Upload your cleaned data and the template file you want to populate. The tool will transfer data by matching headers.</p></div>
+            <div class="control-group">
+                <label for="cleanedDataFile">1. Upload Your Cleaned Data File:</label>
+                <input type="file" id="cleanedDataFile" accept=".csv, .xlsx, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel">
+            </div>
+             <div class="control-group">
+                <label for="templateFile">2. Upload Your Template File:</label>
+                <input type="file" id="templateFile" accept=".csv, .xlsx, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel">
+            </div>
+            <button id="transferButton">Transfer Data to Template</button>
+        </div>
+    </div>
+
+    <script src="validation.js"></script>
+    
+
+</body>
+</html>
