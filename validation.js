@@ -384,7 +384,7 @@
         return result;
     }
 
-function buildAndDownloadFinalFile(mappings, forceSave = false, errors = []) {
+    function buildAndDownloadFinalFile(mappings, forceSave = false, errors = []) {
         let finalHeaders = Object.keys(mappings);
         const errorMap = new Map();
         
@@ -405,24 +405,19 @@ function buildAndDownloadFinalFile(mappings, forceSave = false, errors = []) {
             const cleanField = (val) => {
                 if (!val) return '';
                 const str = String(val).trim();
-                // Check exact match (case insensitive) against garbage list
                 return garbageValues.includes(str.toUpperCase()) ? '' : str;
             };
 
-            // Apply cleaning immediately to raw inputs
             let fName = cleanField(rowMap['contact_first_name']);
             let sName = cleanField(rowMap['contact_surname']);
             let rawMappedTitle = cleanField(rowMap['contact_title']);
             let company = cleanField(rowMap['contact_company_name']);
 
-            // 2. COMPANY KEYWORD CHECK (The "UNLESS" Logic)
-            // Keywords: PTY, LTD, Corporation, Services, Holding, Trust, Trustee, limited, accounts, THE
-            const companyRegex = /\b(PTY|LTD|Corporation|Services|Construction|School|College|Holding|Trust|Trustee|pty ltd|limited|accounts|THE)\b/i;
+            // 2. COMPANY KEYWORD CHECK
+            const companyRegex = /\b(PTY|LTD|Corporation|Services|Holding|Trust|Trustee|pty ltd|limited|accounts|THE)\b/i;
             
-            // IF the Name fields contain company keywords, we treat them as a company.
             if (companyRegex.test(fName) || companyRegex.test(sName)) {
                 if (!company) {
-                    // Only move to company field if it's currently empty
                     const fullString = (fName + " " + sName).trim();
                     rowMap['contact_company_name'] = fullString;
                     if (!finalHeadersSet.has('contact_company_name')) {
@@ -430,52 +425,39 @@ function buildAndDownloadFinalFile(mappings, forceSave = false, errors = []) {
                         finalHeaders.push('contact_company_name');
                     }
                 }
-                // ALWAYS clear the name fields if they matched the company keywords
                 rowMap['contact_first_name'] = '';
                 rowMap['contact_surname'] = '';
                 rowMap['contact_title'] = '';
-                return; // Stop processing names for this row (it's a company)
+                return; 
             }
 
-            // --- IF WE REACH HERE, THE NAMES ARE VALID PERSON NAMES. KEEP THEM & SPLIT. ---
-
-            // 3. TITLE SPLITTING & NORMALIZATION
-            // Split mapped title by &, and, /, comma
+            // 3. TITLE SPLITTING
             let splitTitles = [];
             if (rawMappedTitle) {
-                // Regex matches: spaces around &, and, /, ,
                 const splitRegex = /\s*(?:and|&|\/|,)\s*/gi;
                 splitTitles = rawMappedTitle.split(splitRegex).map(t => t.trim()).filter(t => t);
             }
 
             const allowedTitles = ["MR", "MRS", "MS", "MISS", "DR"];
             const isValidTitle = (t) => {
-                // Remove dots for checking (e.g. "Mr." -> "Mr")
                 const cleanT = String(t || '').replace(/\./g, '').trim().toUpperCase();
                 return allowedTitles.includes(cleanT);
             };
 
-            // 4. NAME NORMALIZE & SPLIT PREPARATION
-            // Remove (...) content
+            // 4. NAME NORMALIZE
             fName = fName.replace(/\s?\(.*?\)/g, '');
             sName = sName.replace(/\s?\(.*?\)/g, '');
-
-            // Normalize delimiters to '&'
-            // Includes: " and ", " / ", " ; ", " + ", ","
             const normalize = (str) => str.replace(/\s+(and|&)\s+|,\s*|\s*\/\s*|\s+;\s+|\s+\+\s+/gi, '&');
             fName = normalize(fName);
             sName = normalize(sName);
 
             const lastNamePrefixes = ["Van De ", "Van ", "De Los ", "Delos ", "Dela ", "De La ", "De "];
 
-            // 5. HANDLE "JOINT" NAMES (C# Logic Port)
-            // Case A: FName ends with '&' -> Append sName
+            // 5. JOINT NAMES
             if (fName.trim().endsWith('&')) {
                 fName = fName + " " + sName;
                 sName = ""; 
             }
-            
-            // Case B: SName starts with '&' -> Move first part to FName list
             if (sName.trim().startsWith('&')) {
                 sName = sName.trim().substring(1).trim();
                 const firstSpace = sName.indexOf(' ');
@@ -493,62 +475,48 @@ function buildAndDownloadFinalFile(mappings, forceSave = false, errors = []) {
             let firstNamesList = fName.split('&').map(s => s.trim()).filter(s => s);
             let lastNamesList = sName.split('&').map(s => s.trim()).filter(s => s);
 
-            // 7. DISTRIBUTE & EXTRACT TITLES/PREFIXES
+            // 7. DISTRIBUTE
             let count = Math.max(firstNamesList.length, lastNamesList.length);
             
             for (let i = 0; i < count; i++) {
                 let currentFirst = firstNamesList[i] || '';
                 let currentLast = '';
 
-                // Determine Last Name
                 if (lastNamesList.length > i) {
                     currentLast = lastNamesList[i];
                 } else if (lastNamesList.length > 0) {
-                    // Reuse the last available surname (e.g. John & Jane [Doe])
                     currentLast = lastNamesList[lastNamesList.length - 1];
                 }
 
-                // --- DETERMINE TITLE FOR THIS PERSON ---
                 let finalPersonTitle = '';
-
-                // Priority A: Extract Title from First Name (e.g. "Dr. John")
                 const titleRegex = /^(Mrs|Mr|Ms|Miss|Dr)\.?\s+/i;
                 const titleMatch = currentFirst.match(titleRegex);
                 
                 if (titleMatch) {
                     let extracted = titleMatch[1];
-                    // Verify whitelist
                     if (isValidTitle(extracted)) {
                         finalPersonTitle = extracted;
                     }
-                    // Remove title from name regardless of validity to clean the name
                     currentFirst = currentFirst.replace(titleRegex, '').trim();
-                } 
-                // Priority B: Use Split Title List (e.g. mapped "Mr & Mrs")
-                else if (splitTitles.length > i) {
+                } else if (splitTitles.length > i) {
                     let candidate = splitTitles[i];
                     if (isValidTitle(candidate)) {
                         finalPersonTitle = candidate;
                     }
-                }
-                // Priority C: Use First Mapped Title (Fallback for first person only)
-                else if (i === 0 && splitTitles.length > 0) {
+                } else if (i === 0 && splitTitles.length > 0) {
                      let candidate = splitTitles[0];
                      if (isValidTitle(candidate)) {
                          finalPersonTitle = candidate;
                      }
                 }
 
-                // Handle Last Name Prefixes
                 for (let prefix of lastNamePrefixes) {
                     if (currentLast.toUpperCase().startsWith(prefix.toUpperCase())) {
                         break; 
                     }
                 }
 
-                // 8. ASSIGN TO ROW MAP
                 let suffix = (i === 0) ? '' : `_${i + 1}`;
-                
                 let tHeader = `contact_title${suffix}`;
                 let fHeader = `contact_first_name${suffix}`;
                 let sHeader = `contact_surname${suffix}`;
@@ -631,11 +599,66 @@ function buildAndDownloadFinalFile(mappings, forceSave = false, errors = []) {
                 }
             }
 
+            // --- STEP 1.5: HARVEST MISPLACED EMAILS (UPDATED LOGIC) ---
+            const emailSourceFields = [
+                { header: 'contact_first_name', label: 'Name Email' },
+                { header: 'contact_surname', label: 'Name Email' },
+                { header: 'contact_mobile', label: 'Mobile Email' },
+                { header: 'contact_phone_home', label: 'Home Email' },
+                { header: 'contact_phone_work', label: 'Work Email' },
+                { header: 'contact_fax', label: 'Fax Email' },
+                { header: 'contact_company_name', label: 'Company Email' }
+            ];
+
+            emailSourceFields.forEach(source => {
+                let val = rowMap[source.header] || '';
+                if (!val || val.indexOf('@') === -1) return; 
+
+                // Look for email patterns
+                const emailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/gi;
+                let matches = val.match(emailRegex);
+
+                if (matches && matches.length > 0) {
+                    matches.forEach(foundEmail => {
+                        if (isValidEmail(foundEmail)) {
+                            // Check against the current main email field (if any)
+                            const currentMainRaw = rowMap['contact_email_address'] || '';
+                            
+                            // Clean and split existing emails to check for duplicates
+                            // We use cleanEmailInput here to ensure we compare apples-to-apples
+                            const existingEmails = cleanEmailInput(currentMainRaw)
+                                .toLowerCase()
+                                .split(/[,;]/)
+                                .map(e => e.trim());
+
+                            if (!currentMainRaw) {
+                                // CASE A: Main email is empty -> Move it there
+                                ensureHeader('contact_email_address');
+                                rowMap['contact_email_address'] = foundEmail;
+                            } else if (existingEmails.includes(foundEmail.toLowerCase())) {
+                                // CASE B: It matches an existing email -> DO NOTHING (Just remove from source below)
+                                // We purposefully do NOT add this to remarks.
+                            } else {
+                                // CASE C: It is a NEW/DIFFERENT email -> Add to remarks
+                                addRemark(`${source.label}: ${foundEmail}`);
+                            }
+                            
+                            // Always clean the extracted email from the source field
+                            val = val.replace(foundEmail, '').trim();
+                        }
+                    });
+                    
+                    // Clean up extra spaces or punctuation left behind
+                    val = val.replace(/\s+/g, ' ').replace(/^,|,$/g, '').trim();
+                    rowMap[source.header] = val;
+                }
+            });
+
             // --- STEP 2: EMAIL CLEANING, VALIDATION & SPLITTING ---
             if (rowMap['contact_email_address']) {
                 const rawEmailString = rowMap['contact_email_address'];
                 
-                // 1. CLEAN FIRST (Remove mailto, brackets, spaces)
+                // 1. CLEAN FIRST
                 const cleanedEmailString = cleanEmailInput(rawEmailString);
 
                 // 2. SPLIT
