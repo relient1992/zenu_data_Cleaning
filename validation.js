@@ -384,7 +384,7 @@
         return result;
     }
 
-    function buildAndDownloadFinalFile(mappings, forceSave = false, errors = []) {
+function buildAndDownloadFinalFile(mappings, forceSave = false, errors = []) {
         let finalHeaders = Object.keys(mappings);
         const errorMap = new Map();
         
@@ -412,6 +412,15 @@
             let sName = cleanField(rowMap['contact_surname']);
             let rawMappedTitle = cleanField(rowMap['contact_title']);
             let company = cleanField(rowMap['contact_company_name']);
+
+            // --- NEW LOGIC: IF NAMES ARE BLANK, CLEAR TITLE ---
+            if (!fName && !sName) {
+                rawMappedTitle = '';
+                // Ensure rowMap is explicitly cleared so garbage doesn't persist
+                rowMap['contact_first_name'] = '';
+                rowMap['contact_surname'] = '';
+                rowMap['contact_title'] = '';
+            }
 
             // 2. COMPANY KEYWORD CHECK
             const companyRegex = /\b(PTY|LTD|Corporation|Services|Holding|Trust|Trustee|pty ltd|limited|accounts|THE)\b/i;
@@ -599,7 +608,7 @@
                 }
             }
 
-            // --- STEP 1.5: HARVEST MISPLACED EMAILS (UPDATED LOGIC) ---
+            // --- STEP 1.5: HARVEST MISPLACED EMAILS ---
             const emailSourceFields = [
                 { header: 'contact_first_name', label: 'Name Email' },
                 { header: 'contact_surname', label: 'Name Email' },
@@ -614,18 +623,18 @@
                 let val = rowMap[source.header] || '';
                 if (!val || val.indexOf('@') === -1) return; 
 
-                // Look for email patterns
+                // 1. SMART CLEAN: Remove spaces around @
+                val = val.replace(/\s*@\s*/g, '@');
+
+                // 2. EXTRACT EMAILS
                 const emailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/gi;
                 let matches = val.match(emailRegex);
 
                 if (matches && matches.length > 0) {
                     matches.forEach(foundEmail => {
                         if (isValidEmail(foundEmail)) {
-                            // Check against the current main email field (if any)
+                            // Check against the current main email field
                             const currentMainRaw = rowMap['contact_email_address'] || '';
-                            
-                            // Clean and split existing emails to check for duplicates
-                            // We use cleanEmailInput here to ensure we compare apples-to-apples
                             const existingEmails = cleanEmailInput(currentMainRaw)
                                 .toLowerCase()
                                 .split(/[,;]/)
@@ -636,19 +645,17 @@
                                 ensureHeader('contact_email_address');
                                 rowMap['contact_email_address'] = foundEmail;
                             } else if (existingEmails.includes(foundEmail.toLowerCase())) {
-                                // CASE B: It matches an existing email -> DO NOTHING (Just remove from source below)
-                                // We purposefully do NOT add this to remarks.
+                                // CASE B: Duplicate -> Just remove from source
                             } else {
-                                // CASE C: It is a NEW/DIFFERENT email -> Add to remarks
+                                // CASE C: New/Different -> Add to remarks
                                 addRemark(`${source.label}: ${foundEmail}`);
                             }
                             
-                            // Always clean the extracted email from the source field
                             val = val.replace(foundEmail, '').trim();
                         }
                     });
                     
-                    // Clean up extra spaces or punctuation left behind
+                    // Clean up source field
                     val = val.replace(/\s+/g, ' ').replace(/^,|,$/g, '').trim();
                     rowMap[source.header] = val;
                 }
