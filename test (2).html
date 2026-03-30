@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Zenu Migration Tool</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:#070d1a;font-family:'Segoe UI',system-ui,sans-serif;color:#e2e8f0;}
+  select option{background:#0d1d33;color:#e2e8f0;}
+  ::-webkit-scrollbar{width:6px;height:6px;}
+  ::-webkit-scrollbar-track{background:#0d1d33;}
+  ::-webkit-scrollbar-thumb{background:#1a2d4a;border-radius:3px;}
+  input[type=text]{box-sizing:border-box;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useCallback, useRef, useEffect } = React;
+
+// ─── EXACT ZENU OUTPUT SCHEMA (155 columns) ───────────────────────────────────
+const ZENU_OUTPUT_HEADERS = [
+  "contact_identifier","zenu_contact_id","contact_title","contact_first_name","contact_surname",
+  "contact_is_company","contact_company_name","contact_name_on_letters","contact_legal_name",
+  "contact_company_position","contact_type","contact_tags","contact_subscriptions",
+  "contact_mailing_address_line1","contact_mailing_address_line2","contact_mailing_address_suburb",
+  "contact_mailing_address_town_city","contact_mailing_address_state","contact_mailing_address_country",
+  "contact_mailing_address_postcode","contact_email_address","contact_mobile","contact_phone_work",
+  "contact_phone_home","contact_fax","contact_allow_contact_via_text","contact_allow_contact_via_email",
+  "contact_allow_contact_via_letter","contact_allow_contact_via_phone","contact_unsubscribe_from_marketing",
+  "contact_childrens_names","contact_enquiry_source","contact_rating","contact_partner_identifier",
+  "contact_partnership_id","contact_partnership_type","contact_last_contact_date","contact_date_created",
+  "contact_date_modified","contact_criteria_sale_method","contact_criteria_category",
+  "contact_criteria_property_type","contact_criteria_title_type","contact_criteria_price_from",
+  "contact_criteria_price_to","contact_criteria_bedrooms","contact_criteria_bathrooms",
+  "contact_criteria_carspaces","contact_criteria_land_from","contact_criteria_land_to",
+  "contact_criteria_land_unit","contact_criteria_living_area_from","contact_criteria_living_area_to",
+  "contact_criteria_living_area_unit","contact_criteria_suburbs","contact_team_member_1",
+  "contact_team_member_2","contact_sale_type","zenu_solicitor_id","zenu_company_id",
+  "contact_notes","contact_note_created_date","contact_note_team_member",
+  "property_identifier","zenu_property_id","property_unit_number","property_street_number",
+  "property_street_name","property_suburb","property_postcode","property_state","property_country",
+  "property_full_address","property_building_name","property_sale_method","property_category",
+  "property_type","property_bedrooms","property_bathrooms","property_toilets","property_total_rooms",
+  "property_garages","property_carports","property_open_parking_spaces","property_living_area_m2",
+  "property_land_size_m2","property_modified_date","property_appraisal_date","property_timeline_status",
+  "property_team_member_1","property_team_member_2","property_is_occupied_by_owner",
+  "property_appraisal_source","property_is_selling_within_7_days","property_search_price",
+  "property_vendor_price","property_estimated_commission","property_pipeline_rating",
+  "property_contract_date","property_unconditional_date","property_settlement_date","property_sold_price",
+  "property_sale_team_member","property_sale_team_member_role",
+  "property_sale_team_member_recognition_percentage","property_sale_team_member_recognition_amount",
+  "property_sale_gross_commission","property_year_built","property_council_name","property_council_zoning",
+  "property_lot_number","property_title_number","property_rent_per_week","property_last_listed_price",
+  "property_current_price","property_last_listed_date","property_last_contract_date",
+  "property_last_sold_date","property_last_sold_price","property_last_listed_by_agency",
+  "property_last_listed_by_agent","property_last_leased_agency","property_last_rent_pw",
+  "property_notes","property_note_created_date","property_note_team_member",
+  "task_identifier","zenu_task_id","task_subject","task_notes","task_status","task_team_member_1","task_date_due",
+  "enquiry_identifier","zenu_enquiry_id","enquiry_notes","enquiry_status","enquiry_source",
+  "enquiry_team_member_1","enquiry_date_created",
+  "inspection_identifier","zenu_inspection_id","inspection_notes","inspection_start_date",
+  "inspection_end_date","inspection_is_private","inspection_team_member_1","inspection_is_interested",
+  "inspection_feedback_price",
+  "offer_identifier","zenu_offer_id","offer_price","offer_terms","offer_date","offer_team_member_1",
+];
+
+// ─── MRI EAGLE MAPPINGS ───────────────────────────────────────────────────────
+const EAGLE_SIGNATURE = ["first_name","last_name","mobile_phone","background_info","bp_comments"];
+
+const EAGLE_CONTACT_MAPPING = [
+  {source:"id",zenu:"contact_identifier"},
+  {source:"title",zenu:"contact_title"},
+  {source:"first_name",zenu:"contact_first_name"},
+  {source:"last_name",zenu:"contact_surname"},
+  {source:"legal_name",zenu:"contact_legal_name"},
+  {source:"company",zenu:"contact_company_name"},
+  {source:"email",zenu:"contact_email_address"},
+  {source:"mobile_phone",zenu:"contact_mobile"},
+  {source:"business_hours_phone",zenu:"contact_phone_work"},
+  {source:"after_hours_phone",zenu:"contact_phone_home"},
+  {source:"fax",zenu:"contact_fax"},
+  {source:"address_line_1",zenu:"contact_mailing_address_line1"},
+  {source:"address_line_2",zenu:"contact_mailing_address_line2"},
+  {source:"suburb",zenu:"contact_mailing_address_suburb"},
+  {source:"state",zenu:"contact_mailing_address_state"},
+  {source:"postcode",zenu:"contact_mailing_address_postcode"},
+  {source:"country",zenu:"contact_mailing_address_country"},
+  {source:"background_info",zenu:"contact_notes",notesMerge:true,note:"Eagle background_info → contact_notes"},
+  {source:"last_note",zenu:"contact_notes",notesMerge:true,note:"Eagle last_note → contact_notes"},
+  {source:"bp_comments",zenu:"contact_notes",notesMerge:true,note:"Buyer profile comments → contact_notes"},
+  {source:"referred_by",zenu:"contact_enquiry_source"},
+  {source:"created_at",zenu:"contact_date_created",transform:"date"},
+  {source:"last_contacted_at",zenu:"contact_last_contact_date",transform:"date"},
+  {source:"subscribed",zenu:"contact_allow_contact_via_email",transform:"bool"},
+  {source:"sms_subscribed",zenu:"contact_allow_contact_via_text",transform:"bool"},
+  {source:"letters_subscribed",zenu:"contact_allow_contact_via_letter",transform:"bool"},
+  {source:"do_not_contact",zenu:"contact_unsubscribe_from_marketing",transform:"bool"},
+  {source:"groups",zenu:"contact_tags",transform:"semicolonToComma",note:"Eagle groups (;) → Zenu tags (,)"},
+  {source:"bp_listing_types",zenu:"contact_criteria_sale_method",transform:"eagleListingType"},
+  {source:"bp_property_types",zenu:"contact_criteria_property_type",transform:"semicolonToComma"},
+  {source:"bp_min_price",zenu:"contact_criteria_price_from"},
+  {source:"bp_max_price",zenu:"contact_criteria_price_to"},
+  {source:"bp_min_bedrooms",zenu:"contact_criteria_bedrooms"},
+  {source:"bp_min_bathrooms",zenu:"contact_criteria_bathrooms"},
+  {source:"bp_min_car_spaces",zenu:"contact_criteria_carspaces"},
+  {source:"bp_min_land_size",zenu:"contact_criteria_land_from"},
+  {source:"bp_max_land_size",zenu:"contact_criteria_land_to"},
+  {source:"bp_land_size_unit",zenu:"contact_criteria_land_unit",transform:"landUnit"},
+  {source:"bp_min_floor_size",zenu:"contact_criteria_living_area_from"},
+  {source:"bp_max_floor_size",zenu:"contact_criteria_living_area_to"},
+  {source:"bp_postcode_ids",zenu:"contact_criteria_suburbs",transform:"semicolonToComma"},
+  {source:"uid",zenu:"_drop"},{source:"dedup_string",zenu:"_drop"},
+  {source:"normalized_mobile_phone",zenu:"_drop"},{source:"searchable_phone_numbers",zenu:"_drop"},
+  {source:"encrypted_password",zenu:"_drop"},{source:"pipl_updated_at",zenu:"_drop"},
+  {source:"activity_score",zenu:"_drop"},{source:"activity_clicks",zenu:"_drop"},
+  {source:"activity_page_views",zenu:"_drop"},{source:"activity_email_opens",zenu:"_drop"},
+  {source:"token_counter",zenu:"_drop"},{source:"merged_to",zenu:"_drop"},
+];
+
+const EAGLE_APPRAISAL_MAPPING = [
+  {source:"id",zenu:"property_identifier"},
+  {source:"unit",zenu:"property_unit_number"},
+  {source:"street_no",zenu:"property_street_number"},
+  {source:"street",zenu:"property_street_name"},
+  {source:"suburb",zenu:"property_suburb"},
+  {source:"state",zenu:"property_state"},
+  {source:"postcode",zenu:"property_postcode"},
+  {source:"lot_no",zenu:"property_lot_number"},
+  {source:"municipality",zenu:"property_council_name"},
+  {source:"property_type",zenu:"property_type",transform:"eaglePropertyType"},
+  {source:"listing_type",zenu:"property_sale_method",transform:"eagleListingTypeProperty"},
+  {source:"bedrooms",zenu:"property_bedrooms"},
+  {source:"bathrooms",zenu:"property_bathrooms"},
+  {source:"ensuites",zenu:"property_toilets"},
+  {source:"garage_spaces",zenu:"property_garages"},
+  {source:"carport_spaces",zenu:"property_carports"},
+  {source:"open_car_spaces",zenu:"property_open_parking_spaces"},
+  {source:"house_sizes",zenu:"property_living_area_m2"},
+  {source:"land_size",zenu:"property_land_size_m2"},
+  {source:"asking_price",zenu:"property_search_price"},
+  {source:"min_price",zenu:"property_vendor_price"},
+  {source:"appraisal_date",zenu:"property_appraisal_date",transform:"date"},
+  {source:"created_at",zenu:"property_modified_date",transform:"date"},
+  {source:"status",zenu:"property_timeline_status",transform:"eagleAppraisalStatus"},
+  {source:"interest_level",zenu:"property_pipeline_rating",transform:"eagleInterestLevel"},
+  {source:"internal_notes",zenu:"property_notes",notesMerge:true},
+  {source:"last_note",zenu:"property_notes",notesMerge:true,note:"Last appraisal note → property_notes"},
+  {source:"contact_first_name",zenu:"contact_first_name"},
+  {source:"contact_last_name",zenu:"contact_surname"},
+  {source:"contact_title",zenu:"contact_title"},
+  {source:"contact_email",zenu:"contact_email_address"},
+  {source:"contact_mobile_phone",zenu:"contact_mobile"},
+  {source:"contact_business_hours_phone",zenu:"contact_phone_work"},
+  {source:"contact_id",zenu:"contact_identifier"},
+];
+
+const EAGLE_PROPERTY_MAPPING = [
+  {source:"id",zenu:"property_identifier"},
+  {source:"unit",zenu:"property_unit_number"},
+  {source:"street_no",zenu:"property_street_number"},
+  {source:"street",zenu:"property_street_name"},
+  {source:"suburb",zenu:"property_suburb"},
+  {source:"state",zenu:"property_state"},
+  {source:"postcode",zenu:"property_postcode"},
+  {source:"lot_no",zenu:"property_lot_number"},
+  {source:"municipality",zenu:"property_council_name"},
+  {source:"property_type",zenu:"property_type",transform:"eaglePropertyType"},
+  {source:"listing_type",zenu:"property_sale_method",transform:"eagleListingTypeProperty"},
+  {source:"bedrooms",zenu:"property_bedrooms"},
+  {source:"bathrooms",zenu:"property_bathrooms"},
+  {source:"toilets",zenu:"property_toilets"},
+  {source:"garage_spaces",zenu:"property_garages"},
+  {source:"carport_spaces",zenu:"property_carports"},
+  {source:"open_car_spaces",zenu:"property_open_parking_spaces"},
+  {source:"house_sizes",zenu:"property_living_area_m2"},
+  {source:"land_size",zenu:"property_land_size_m2"},
+  {source:"price",zenu:"property_search_price"},
+  {source:"sold_price",zenu:"property_sold_price"},
+  {source:"rental_per_week",zenu:"property_rent_per_week"},
+  {source:"sold_date",zenu:"property_contract_date",transform:"date"},
+  {source:"created_at",zenu:"property_modified_date",transform:"date"},
+  {source:"listed_at",zenu:"property_last_listed_date",transform:"date"},
+  {source:"internal_notes",zenu:"property_notes",notesMerge:true},
+  {source:"status",zenu:"property_timeline_status",transform:"eaglePropertyStatus"},
+  {source:"business_year_built",zenu:"property_year_built"},
+  {source:"commercial_zoning",zenu:"property_council_zoning"},
+  {source:"vendor_legal_name",zenu:"contact_legal_name"},
+];
+
+const EAGLE_TASK_MAPPING = [
+  {source:"id",zenu:"task_identifier"},
+  {source:"body",zenu:"task_subject"},
+  {source:"due_date",zenu:"task_date_due",transform:"date"},
+  {source:"completed_at",zenu:"task_status",transform:"eagleTaskStatus"},
+];
+
+const EAGLE_RELATIONSHIP_MAPPING = [
+  {source:"contact1_id",zenu:"contact_identifier"},
+  {source:"contact2_id",zenu:"contact_partner_identifier"},
+  {source:"relationship_type",zenu:"contact_partnership_type"},
+];
+
+const EAGLE_CONTRACT_MAPPING = [
+  {source:"sale_price",zenu:"property_sold_price"},
+  {source:"acceptance_date",zenu:"property_contract_date",transform:"date"},
+  {source:"unconditional_date",zenu:"property_unconditional_date",transform:"date"},
+  {source:"settlement_date",zenu:"property_settlement_date",transform:"date"},
+  {source:"commission",zenu:"property_sale_gross_commission"},
+  {source:"vendor_legal_name",zenu:"contact_legal_name"},
+  {source:"vendor_first_name",zenu:"contact_first_name"},
+  {source:"vendor_last_name",zenu:"contact_surname"},
+];
+
+const EAGLE_INTEREST_MAPPING = [
+  {source:"id",zenu:"inspection_identifier"},
+  {source:"interested",zenu:"inspection_is_interested",transform:"eagleInterested"},
+  {source:"price_feedback",zenu:"inspection_feedback_price"},
+  {source:"last_inspected",zenu:"inspection_start_date",transform:"date"},
+  {source:"last_enquired",zenu:"enquiry_date_created",transform:"date"},
+  {source:"property_id",zenu:"property_identifier"},
+  {source:"contact_id",zenu:"contact_identifier"},
+];
+
+const CRM_MAPPINGS = {
+  "contacts.csv": EAGLE_CONTACT_MAPPING,
+  "appraisals.csv": EAGLE_APPRAISAL_MAPPING,
+  "properties.csv": EAGLE_PROPERTY_MAPPING,
+  "tasks.csv": EAGLE_TASK_MAPPING,
+  "contact_relationships.csv": EAGLE_RELATIONSHIP_MAPPING,
+  "contracts.csv": EAGLE_CONTRACT_MAPPING,
+  "property_interests.csv": EAGLE_INTEREST_MAPPING,
+};
+
+const LOOKUP_FILES = new Set(["users.csv","agents.csv","vendors.csv","purchasers.csv","addresses.csv","address_ownerships.csv","address_tenancies.csv","property_agencies.csv","images.csv"]);
+
+// ─── VALUE TRANSLATIONS ───────────────────────────────────────────────────────
+const VALUE_TRANSLATIONS = {
+  eagleListingType: {
+    "residential_sale":"Sale","residential_lease":"Lease","commercial_sale":"Sale",
+    "commercial_lease":"Lease","rural_sale":"Sale","rural_lease":"Lease",
+    "business_sale":"Sale","land_sale":"Sale","sale":"Sale","lease":"Lease",
+  },
+  eagleListingTypeProperty: {
+    "residential_sale":"Sale","residential_lease":"Lease","commercial_sale":"Sale",
+    "commercial_lease":"Lease","rural_sale":"Sale","rural_lease":"Lease",
+    "business_sale":"Sale","land_sale":"Sale","sale":"Sale","auction":"Sale","lease":"Lease","both":"both",
+  },
+  eaglePropertyType: {
+    "House":"House","Unit":"Unit","Apartment":"Apartment","Townhouse":"Townhouse","Villa":"Villa",
+    "Land":"Vacant Land","Acreage":"AcreageSemi-rural","Rural":"AcreageSemi-rural","Studio":"Studio",
+    "Terrace":"Terrace","Flat":"Flat","Duplex":"DuplexSemi-detached","Block Of Units":"BlockOfUnits",
+    "Retirement":"Retirement","Warehouse":"Industrial/Warehouse","Offices":"Offices","Retail":"Retail",
+    "Commercial":"Offices","Industrial":"Industrial/Warehouse","Other":"Other",
+    "Serviced Apartment":"ServicedApartment","Holiday":"Other",
+  },
+  eaglePropertyStatus: {
+    "Active":"Appraisal","active":"Appraisal","Sold":"Prospect","sold":"Prospect",
+    "Leased":"Prospect","leased":"Prospect","Withdrawn":"Prospect not on market",
+    "withdrawn":"Prospect not on market","Archived":"Prospect not on market","archived":"Prospect not on market",
+  },
+  eagleAppraisalStatus: {
+    "active":"Appraisal","prospect":"Prospect","sold":"Prospect","leased":"Prospect","archived":"Prospect not on market",
+  },
+  eagleInterestLevel: {
+    "hot":"A","warm":"B","cold":"C","none":"D","Hot":"A","Warm":"B","Cold":"C","None":"D",
+  },
+  eagleInterested: {
+    "Yes":"Yes","No":"No","Maybe":"Maybe","yes":"Yes","no":"No","maybe":"Maybe",
+  },
+  landUnit: {
+    "Square metres":"sqm","Hectares":"hectare","Acres":"acre","Square feet":"sqm","sqm":"sqm","ha":"hectare","acres":"acre",
+  },
+  eagleTaskStatus: {},
+};
+
+// ─── CSV UTILITIES ────────────────────────────────────────────────────────────
+function parseCSVLine(line) {
+  const r=[]; let cur=""; let inQ=false;
+  for(let i=0;i<line.length;i++){
+    const c=line[i];
+    if(c==='"'){if(inQ&&line[i+1]==='"'){cur+='"';i++;}else inQ=!inQ;}
+    else if(c===','&&!inQ){r.push(cur);cur="";}
+    else cur+=c;
+  }
+  r.push(cur); return r;
+}
+function parseCSV(text){
+  const lines=text.split(/\r?\n/);
+  if(!lines.length) return {headers:[],rows:[]};
+  const headers=parseCSVLine(lines[0]).map(h=>h.trim().replace(/^"|"$/g,""));
+  const rows=[];
+  for(let i=1;i<lines.length;i++){
+    if(!lines[i].trim()) continue;
+    const vals=parseCSVLine(lines[i]);
+    const row={};
+    headers.forEach((h,idx)=>{ row[h]=(vals[idx]??"").replace(/^"|"$/g,""); });
+    rows.push(row);
+  }
+  return {headers,rows};
+}
+function toCSV(rows,headers){
+  const esc=v=>{if(v===null||v===undefined)return"";const s=String(v);if(s.includes(",")||s.includes('"')||s.includes("\n"))return'"'+s.replace(/"/g,'""')+'"';return s;};
+  return [headers.map(esc).join(","),...rows.map(r=>headers.map(h=>esc(r[h]??"")).join(","))].join("\n");
+}
+function downloadFile(content,filename){
+  const b=new Blob([content],{type:"text/csv;charset=utf-8;"});
+  const u=URL.createObjectURL(b);const a=document.createElement("a");
+  a.href=u;a.download=filename;a.click();URL.revokeObjectURL(u);
+}
+
+// ─── TRANSFORMS ───────────────────────────────────────────────────────────────
+function normalizeDate(val){
+  if(!val||val==="NULL"||val==="") return {value:"",guessed:false};
+  const v=val.trim();
+  if(/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(v)) return {value:v,guessed:false};
+  const iso=v.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(iso) return {value:`${iso[3]}/${iso[2]}/${iso[1]}`,guessed:false};
+  const dt=v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if(dt) return {value:`${dt[1].padStart(2,"0")}/${dt[2].padStart(2,"0")}/${dt[3]}`,guessed:false};
+  return {value:v,guessed:true};
+}
+function applyTransform(value,transform,overrides={}){
+  if(!transform) return {value:value??"",guessed:false};
+  const v=(value??"").toString().trim();
+  if(transform==="date") return normalizeDate(v);
+  if(transform==="bool"){
+    const l=v.toLowerCase();
+    if(["true","1","yes","t"].includes(l)) return {value:"True",guessed:false};
+    if(["false","0","no","f"].includes(l)) return {value:"False",guessed:false};
+    if(v==="") return {value:"",guessed:false};
+    return {value:"",guessed:true};
+  }
+  if(transform==="semicolonToComma") return {value:v.replace(/;+/g,",").replace(/^,+|,+$/g,"").trim(),guessed:false};
+  if(transform==="eagleTaskStatus") return {value:(v&&v!=="NULL")?"Completed":"Active",guessed:false};
+  const table=overrides[transform]||VALUE_TRANSLATIONS[transform];
+  if(table){
+    const mapped=table[v]!==undefined?table[v]:table[v.toLowerCase()];
+    if(mapped!==undefined) return {value:mapped,guessed:false};
+    if(v&&v!=="NULL") return {value:v,guessed:true};
+    return {value:"",guessed:false};
+  }
+  return {value:v,guessed:false};
+}
+
+function detectCRM(fileNames,allParsed){
+  const names=new Set(fileNames.map(n=>n.toLowerCase()));
+  const eagleFiles=["contacts.csv","appraisals.csv","tasks.csv","agents.csv"];
+  if(eagleFiles.filter(f=>names.has(f)).length>=2){
+    const c=allParsed["contacts.csv"];
+    if(c){const h=new Set(c.headers);if(EAGLE_SIGNATURE.filter(s=>h.has(s)).length>=3)return "MRI Eagle";}
+    return "MRI Eagle";
+  }
+  return "Unknown";
+}
+
+function detectDuplicates(rows){
+  const seen=new Map();const dupes=new Set();
+  rows.forEach((row,i)=>{
+    const key=`${(row.first_name||"").toLowerCase()}|${(row.last_name||"").toLowerCase()}|${(row.email||"").toLowerCase()}`;
+    if(key==="||") return;
+    if(seen.has(key)){dupes.add(i);dupes.add(seen.get(key));}
+    else seen.set(key,i);
+  });
+  return dupes;
+}
+
+async function processAllFiles({parsed,dupeResolutions,valueOverrides,onProgress}){
+  const outputRows=[],errorRows=[],flagRows=[];
+  const userMap={};
+  (parsed["users.csv"]?.rows||[]).forEach(u=>{userMap[u.id]=`${u.first_name||""} ${u.last_name||""}`.trim();});
+  (parsed["agents.csv"]?.rows||[]).forEach(a=>{userMap[a.user_id||a.id]=a.name||userMap[a.user_id]||"";});
+  const propAgentMap={};
+  (parsed["property_agencies.csv"]?.rows||[]).forEach(pa=>{
+    if(!propAgentMap[pa.property_id]) propAgentMap[pa.property_id]=[];
+    propAgentMap[pa.property_id].push({agent_id:pa.agent_id,pos:parseInt(pa.position)||0});
+  });
+  const filesToProcess=Object.entries(parsed).filter(([f])=>CRM_MAPPINGS[f]&&!LOOKUP_FILES.has(f));
+  let processed=0;
+  const total=filesToProcess.reduce((s,[,d])=>s+d.rows.length,0)||1;
+  const dupeSet=detectDuplicates(parsed["contacts.csv"]?.rows||[]);
+
+  for(const [fname,data] of filesToProcess){
+    const mappingList=CRM_MAPPINGS[fname]||[];
+    for(let i=0;i<data.rows.length;i++){
+      const src=data.rows[i];
+      processed++;
+      if(processed%300===0){onProgress(Math.min(88,Math.round(processed/total*88)));await new Promise(r=>setTimeout(r,0));}
+      if(fname==="contacts.csv"&&dupeSet.has(i)&&dupeResolutions[i]==="skip"){
+        errorRows.push({file:fname,row:i+2,field:"duplicate",value:`${src.first_name} ${src.last_name}`,reason:"Duplicate contact — skipped by user"});
+        continue;
+      }
+      const out={};
+      ZENU_OUTPUT_HEADERS.forEach(h=>{out[h]="";});
+      const noteParts={contact_notes:[],property_notes:[]};
+      const rowErrors=[];
+      const rowFlags=[];
+      mappingList.forEach(m=>{
+        if(!m.zenu||m.zenu==="_drop") return;
+        const rawVal=src[m.source];
+        if(rawVal===undefined) return;
+        if(m.notesMerge){
+          const {value}=applyTransform(rawVal,m.transform,valueOverrides);
+          if(value&&value!=="NULL"&&value.trim()&&noteParts[m.zenu]) noteParts[m.zenu].push(value);
+          return;
+        }
+        if(m.zenu==="(map to contact_notes)"){
+          if(rawVal&&rawVal!=="NULL") noteParts.contact_notes.push(`[${m.source}] ${rawVal}`);
+          return;
+        }
+        const {value,guessed}=applyTransform(rawVal,m.transform,valueOverrides);
+        if(guessed&&value) rowFlags.push({file:fname,row:i+2,zenu_field:m.zenu,original_value:rawVal,converted_to:value});
+        if(ZENU_OUTPUT_HEADERS.includes(m.zenu)) out[m.zenu]=value;
+      });
+      if(noteParts.contact_notes.length) out.contact_notes=noteParts.contact_notes.join(" | ");
+      if(noteParts.property_notes.length) out.property_notes=noteParts.property_notes.join(" | ");
+      if(fname==="contacts.csv"&&src.user_id) out.contact_team_member_1=userMap[src.user_id]||src.user_id;
+      if(fname==="appraisals.csv"){
+        if(src.agent_1_id) out.property_team_member_1=userMap[src.agent_1_id]||src.agent_1_id;
+        if(src.agent_2_id) out.property_team_member_2=userMap[src.agent_2_id]||src.agent_2_id;
+      }
+      if(fname==="properties.csv"){
+        const agents=(propAgentMap[src.id]||[]).sort((a,b)=>a.pos-b.pos);
+        if(agents[0]) out.property_team_member_1=userMap[agents[0].agent_id]||agents[0].agent_id;
+        if(agents[1]) out.property_team_member_2=userMap[agents[1].agent_id]||agents[1].agent_id;
+      }
+      if(fname==="tasks.csv"&&src.user_id) out.task_team_member_1=userMap[src.user_id]||src.user_id;
+      if(fname==="contacts.csv"&&!out.contact_first_name&&!out.contact_surname&&!out.contact_company_name){
+        rowErrors.push("No name or company — row skipped");
+      }
+      if(rowErrors.length){rowErrors.forEach(reason=>errorRows.push({file:fname,row:i+2,field:"validation",value:"",reason}));continue;}
+      rowFlags.forEach(f=>flagRows.push(f));
+      if(ZENU_OUTPUT_HEADERS.some(h=>out[h]!=="")) outputRows.push(out);
+    }
+  }
+  onProgress(100);
+  return {outputRows,errorRows,flagRows};
+}
+
+// ─── UI HELPERS ───────────────────────────────────────────────────────────────
+const STEPS=["Upload","Map Fields","Review & Confirm","Export"];
+
+function StepBar({current}){
+  return(
+    <div style={{display:"flex",alignItems:"center",marginBottom:36}}>
+      {STEPS.map((s,i)=>(
+        <div key={s} style={{display:"flex",alignItems:"center",flex:i<STEPS.length-1?1:"none"}}>
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5}}>
+            <div style={{width:34,height:34,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:800,
+              background:i<current?"#22c55e":i===current?"linear-gradient(135deg,#0ea5e9,#6366f1)":"#131f35",
+              color:i<=current?"#fff":"#334155",
+              boxShadow:i===current?"0 0 0 3px rgba(14,165,233,0.3)":"none",transition:"all 0.3s"}}>
+              {i<current?"✓":i+1}
+            </div>
+            <span style={{fontSize:10,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",
+              color:i===current?"#38bdf8":i<current?"#22c55e":"#334155",whiteSpace:"nowrap"}}>{s}</span>
+          </div>
+          {i<STEPS.length-1&&<div style={{flex:1,height:2,margin:"0 6px",marginBottom:22,background:i<current?"#22c55e":"#131f35",transition:"background 0.3s"}}/>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Chip({color="gray",children}){
+  const c={green:["rgba(34,197,94,.12)","rgba(34,197,94,.3)","#4ade80"],amber:["rgba(251,191,36,.12)","rgba(251,191,36,.3)","#fbbf24"],red:["rgba(239,68,68,.12)","rgba(239,68,68,.3)","#f87171"],blue:["rgba(14,165,233,.12)","rgba(14,165,233,.3)","#38bdf8"],gray:["rgba(100,116,139,.1)","rgba(100,116,139,.25)","#64748b"]}[color];
+  return <span style={{display:"inline-block",padding:"2px 8px",borderRadius:4,fontSize:11,fontWeight:700,background:c[0],border:`1px solid ${c[1]}`,color:c[2],letterSpacing:"0.04em"}}>{children}</span>;
+}
+
+// ─── STAGE 1: UPLOAD ──────────────────────────────────────────────────────────
+function UploadStage({onComplete}){
+  const [files,setFiles]=useState([]);
+  const [parsed,setParsed]=useState({});
+  const [crm,setCrm]=useState(null);
+  const [dragging,setDragging]=useState(false);
+  const ref=useRef();
+  const load=useCallback(async(fileList)=>{
+    const res={};
+    for(const f of fileList){const t=await f.text();res[f.name]=parseCSV(t);}
+    setParsed(res);
+    setCrm(detectCRM(fileList.map(f=>f.name),res));
+  },[]);
+  const onDrop=useCallback(async(e)=>{e.preventDefault();setDragging(false);const f=Array.from(e.dataTransfer.files).filter(f=>f.name.endsWith(".csv"));setFiles(f);await load(f);},[load]);
+  const onChange=useCallback(async(e)=>{const f=Array.from(e.target.files).filter(f=>f.name.endsWith(".csv"));setFiles(f);await load(f);},[load]);
+  const totalRows=Object.values(parsed).reduce((s,d)=>s+d.rows.length,0);
+  return(
+    <div>
+      <h2 style={{fontSize:22,fontWeight:800,color:"#f1f5f9",margin:"0 0 6px"}}>Upload Source CRM Files</h2>
+      <p style={{color:"#475569",fontSize:14,margin:"0 0 28px"}}>Upload all CSV files exported from your source CRM. Multi-file exports are fully supported — drop everything at once.</p>
+      <div onDragOver={e=>{e.preventDefault();setDragging(true);}} onDragLeave={()=>setDragging(false)} onDrop={onDrop} onClick={()=>ref.current.click()}
+        style={{border:`2px dashed ${dragging?"#38bdf8":"#1a2d4a"}`,borderRadius:12,padding:"52px 32px",textAlign:"center",cursor:"pointer",background:dragging?"rgba(14,165,233,0.04)":"transparent",transition:"all 0.2s"}}>
+        <input ref={ref} type="file" multiple accept=".csv" style={{display:"none"}} onChange={onChange}/>
+        <div style={{fontSize:44,marginBottom:10}}>📂</div>
+        <div style={{fontSize:16,fontWeight:700,color:"#e2e8f0"}}>Drop all CRM export files here</div>
+        <div style={{fontSize:13,color:"#334155",marginTop:6}}>or click to browse · accepts .csv · multiple files OK</div>
+      </div>
+      {files.length>0&&(
+        <div style={{marginTop:24}}>
+          <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}>
+            <span style={{fontSize:13,color:"#475569"}}>{files.length} files · {totalRows.toLocaleString()} total rows</span>
+            {crm&&crm!=="Unknown"?<Chip color="green">✓ {crm} Detected</Chip>:<Chip color="amber">CRM not auto-detected</Chip>}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(185px,1fr))",gap:8}}>
+            {files.map(f=>(
+              <div key={f.name} style={{background:"#0d1d33",border:"1px solid #1a2d4a",borderRadius:8,padding:"10px 14px",display:"flex",alignItems:"center",gap:10}}>
+                <span style={{fontSize:18}}>📄</span>
+                <div>
+                  <div style={{fontSize:12,fontWeight:600,color:"#e2e8f0"}}>{f.name}</div>
+                  <div style={{fontSize:11,color:"#334155"}}>{(parsed[f.name]?.rows.length||0).toLocaleString()} rows</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <div style={{marginTop:32,display:"flex",justifyContent:"flex-end"}}>
+        <button disabled={!files.length} onClick={()=>onComplete({files,parsed,crm})}
+          style={{padding:"12px 32px",borderRadius:8,border:"none",background:files.length?"linear-gradient(135deg,#0ea5e9,#6366f1)":"#0d1d33",color:files.length?"#fff":"#334155",fontWeight:800,fontSize:14,cursor:files.length?"pointer":"not-allowed"}}>
+          Continue to Field Mapping →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── STAGE 2: MAPPING ─────────────────────────────────────────────────────────
+function MappingStage({uploadData,onComplete}){
+  const {parsed,crm}=uploadData;
+  const buildDefaults=()=>{
+    const state={};
+    Object.entries(parsed).forEach(([fname,data])=>{
+      if(LOOKUP_FILES.has(fname)) return;
+      state[fname]={};
+      const defs=CRM_MAPPINGS[fname]||[];
+      data.headers.forEach(h=>{
+        const found=defs.find(m=>m.source===h);
+        state[fname][h]={zenu:found?.zenu||"",note:found?.note||"",status:found?"auto":"unmapped"};
+      });
+    });
+    return state;
+  };
+  const [mappings,setMappings]=useState(buildDefaults);
+  const [activeFile,setActiveFile]=useState(Object.keys(parsed).find(f=>!LOOKUP_FILES.has(f))||"");
+  const [filter,setFilter]=useState("all");
+  const allM=Object.values(mappings).flatMap(f=>Object.values(f));
+  const autoCount=allM.filter(m=>m.status==="auto").length;
+  const unmapCount=allM.filter(m=>!m.zenu).length;
+  const curM=mappings[activeFile]||{};
+  const headers=parsed[activeFile]?.headers||[];
+  const visible=headers.filter(h=>{
+    const m=curM[h];
+    if(filter==="auto") return m?.status==="auto";
+    if(filter==="unmapped") return !m?.zenu;
+    return true;
+  });
+  const update=(fname,h,val)=>setMappings(p=>({...p,[fname]:{...p[fname],[h]:{...p[fname][h],zenu:val,status:val?"manual":"unmapped"}}}));
+  const mappableFiles=Object.keys(parsed).filter(f=>!LOOKUP_FILES.has(f));
+
+  return(
+    <div>
+      <h2 style={{fontSize:22,fontWeight:800,color:"#f1f5f9",margin:"0 0 6px"}}>Field Mapping</h2>
+      <p style={{color:"#475569",fontSize:14,margin:"0 0 16px"}}>{crm==="MRI Eagle"?"Pre-loaded MRI Eagle mappings applied. ":""}Review every source → Zenu mapping. Output will match Zenu's exact 155-column schema.</p>
+      <div style={{display:"flex",gap:8,marginBottom:18,flexWrap:"wrap"}}>
+        <Chip color="green">✓ Auto-mapped: {autoCount}</Chip>
+        {unmapCount>0&&<Chip color="amber">⚠ Unmapped: {unmapCount}</Chip>}
+        <Chip color="blue">Output: 155 Zenu columns</Chip>
+      </div>
+      <div style={{display:"flex",gap:6,marginBottom:14,flexWrap:"wrap"}}>
+        {mappableFiles.map(f=>(
+          <button key={f} onClick={()=>setActiveFile(f)}
+            style={{padding:"6px 14px",borderRadius:6,border:"1px solid",cursor:"pointer",fontSize:12,fontWeight:600,
+              borderColor:activeFile===f?"#38bdf8":"#1a2d4a",background:activeFile===f?"rgba(14,165,233,0.1)":"transparent",color:activeFile===f?"#38bdf8":"#475569"}}>
+            {f.replace(".csv","")}
+          </button>
+        ))}
+      </div>
+      <div style={{display:"flex",gap:8,marginBottom:12}}>
+        {["all","auto","unmapped"].map(f=>(
+          <button key={f} onClick={()=>setFilter(f)}
+            style={{padding:"4px 12px",borderRadius:5,border:"1px solid",cursor:"pointer",fontSize:12,fontWeight:600,
+              borderColor:filter===f?"#38bdf8":"#1a2d4a",background:filter===f?"rgba(14,165,233,0.08)":"transparent",color:filter===f?"#38bdf8":"#475569"}}>
+            {f==="all"?"All":f==="auto"?"Auto":"Unmapped"}
+            {" "}({f==="all"?headers.length:f==="auto"?Object.values(curM).filter(m=>m.status==="auto").length:Object.values(curM).filter(m=>!m.zenu).length})
+          </button>
+        ))}
+      </div>
+      <div style={{background:"#070d1a",borderRadius:10,border:"1px solid #1a2d4a",overflow:"hidden"}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1.3fr 80px",padding:"9px 16px",background:"#0d1d33",fontSize:11,fontWeight:700,color:"#334155",letterSpacing:"0.08em",textTransform:"uppercase"}}>
+          <div>Source Field</div><div>→ Zenu Destination</div><div>Status</div>
+        </div>
+        <div style={{maxHeight:420,overflowY:"auto"}}>
+          {visible.map((h,i)=>{
+            const m=curM[h]||{};
+            const dropped=m.zenu==="_drop"||m.zenu==="(drop - no Zenu equivalent)";
+            return(
+              <div key={h} style={{display:"grid",gridTemplateColumns:"1fr 1.3fr 80px",padding:"9px 16px",borderBottom:"1px solid #0d1d33",alignItems:"center",background:i%2?"rgba(255,255,255,0.01)":"transparent"}}>
+                <div>
+                  <div style={{fontSize:12,fontWeight:600,color:dropped?"#1e3a5f":"#94a3b8",fontFamily:"monospace"}}>{h}</div>
+                  {m.note&&<div style={{fontSize:11,color:"#334155",marginTop:2}}>{m.note}</div>}
+                </div>
+                <select value={m.zenu||""} onChange={e=>update(activeFile,h,e.target.value)}
+                  style={{width:"100%",background:"#0d1d33",border:"1px solid #1a2d4a",borderRadius:6,color:m.zenu?"#e2e8f0":"#334155",padding:"6px 8px",fontSize:12,cursor:"pointer",outline:"none"}}>
+                  <option value="">— skip this field —</option>
+                  <option value="(map to contact_notes)">→ Append to contact_notes</option>
+                  <option value="(drop - no Zenu equivalent)">→ Drop (log in error report)</option>
+                  <optgroup label="── Zenu Fields ──">
+                    {ZENU_OUTPUT_HEADERS.map(f=><option key={f} value={f}>{f}</option>)}
+                  </optgroup>
+                </select>
+                <div style={{paddingLeft:8}}>
+                  <Chip color={m.status==="auto"?"green":m.zenu?"blue":"amber"}>
+                    {m.status==="auto"?"auto":m.zenu?"manual":"skip"}
+                  </Chip>
+                </div>
+              </div>
+            );
+          })}
+          {visible.length===0&&<div style={{padding:"28px",textAlign:"center",color:"#1a2d4a",fontSize:13}}>No fields match filter.</div>}
+        </div>
+      </div>
+      <div style={{marginTop:24,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div style={{fontSize:13,color:"#334155"}}>{unmapCount>0?`⚠ ${unmapCount} fields will be skipped`:"✓ All fields accounted for"}</div>
+        <button onClick={()=>onComplete({mappings,parsed,crm})}
+          style={{padding:"12px 32px",borderRadius:8,border:"none",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer"}}>
+          Continue to Review →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── STAGE 3: REVIEW ─────────────────────────────────────────────────────────
+function ReviewStage({mappingData}){
+  const {parsed}=mappingData;
+  const [mismatches,setMismatches]=useState([]);
+  const [mismatchRes,setMismatchRes]=useState({});
+  const [dupeRows,setDupeRows]=useState(new Set());
+  const [dupeRes,setDupeRes]=useState({});
+  const [processing,setProcessing]=useState(false);
+  const [progress,setProgress]=useState(0);
+  const [result,setResult]=useState(null);
+
+  useEffect(()=>{
+    const found=[];const seen=new Set();
+    Object.entries(CRM_MAPPINGS).forEach(([fname,defs])=>{
+      const rows=parsed[fname]?.rows||[];
+      rows.forEach(row=>{
+        defs.forEach(m=>{
+          if(!m.transform||!VALUE_TRANSLATIONS[m.transform]) return;
+          const val=row[m.source];
+          if(!val||val==="NULL"||val==="") return;
+          const table=VALUE_TRANSLATIONS[m.transform];
+          if(table[val]===undefined&&table[val.toLowerCase()]===undefined){
+            const key=`${m.transform}::${val}`;
+            if(!seen.has(key)){seen.add(key);found.push({transform:m.transform,sourceValue:val,sourceField:m.source,zenuField:m.zenu,file:fname});}
+          }
+        });
+      });
+    });
+    setMismatches(found);
+    setDupeRows(detectDuplicates(parsed["contacts.csv"]?.rows||[]));
+  },[]);
+
+  const run=async()=>{
+    setProcessing(true);setProgress(0);
+    await new Promise(r=>setTimeout(r,30));
+    const overrides={};
+    Object.entries(mismatchRes).forEach(([key,val])=>{
+      const [transform,sourceValue]=key.split("::");
+      if(!overrides[transform]) overrides[transform]={...VALUE_TRANSLATIONS[transform]};
+      overrides[transform][sourceValue]=val;
+    });
+    const {outputRows,errorRows,flagRows}=await processAllFiles({parsed,dupeResolutions:dupeRes,valueOverrides:overrides,onProgress:p=>setProgress(p)});
+    const mainCsv=toCSV(outputRows,ZENU_OUTPUT_HEADERS);
+    const errCsv=toCSV(errorRows,["file","row","field","value","reason"]);
+    const flagCsv=toCSV(flagRows,["file","row","zenu_field","original_value","converted_to"]);
+    setResult({mainCsv,errCsv,flagCsv,outputRows,errorRows,flagRows});
+    setProcessing(false);
+  };
+
+  if(result) return <ExportStage result={result}/>;
+
+  return(
+    <div>
+      <h2 style={{fontSize:22,fontWeight:800,color:"#f1f5f9",margin:"0 0 6px"}}>Review & Confirm</h2>
+      <p style={{color:"#475569",fontSize:14,margin:"0 0 24px"}}>Confirm value translations and resolve any issues before generating your Zenu import file.</p>
+
+      {mismatches.length>0&&(
+        <div style={{marginBottom:28}}>
+          <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:10}}>
+            <h3 style={{fontSize:15,fontWeight:700,color:"#fbbf24",margin:0}}>⚠️ Value Mismatches — Confirmation Required</h3>
+            <Chip color="amber">{mismatches.length}</Chip>
+          </div>
+          <p style={{fontSize:13,color:"#475569",margin:"0 0 12px"}}>These source values don't match known Zenu accepted values. Enter the correct Zenu value, or leave blank to pass through as-is.</p>
+          <div style={{background:"#070d1a",borderRadius:10,border:"1px solid rgba(251,191,36,0.15)",overflow:"hidden"}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 100px 1fr",padding:"9px 16px",background:"#0d1d33",fontSize:11,fontWeight:700,color:"#334155",textTransform:"uppercase",letterSpacing:"0.08em"}}>
+              <div>Source Value</div><div>Zenu Field</div><div>File</div><div>Correct Zenu Value</div>
+            </div>
+            {mismatches.map((mm,i)=>(
+              <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 1fr 100px 1fr",padding:"9px 16px",borderBottom:"1px solid #0d1d33",alignItems:"center"}}>
+                <div style={{fontFamily:"monospace",fontSize:13,color:"#fbbf24"}}>{mm.sourceValue}</div>
+                <div style={{fontSize:12,color:"#64748b"}}>{mm.zenuField}</div>
+                <div style={{fontSize:11,color:"#334155"}}>{mm.file.replace(".csv","")}</div>
+                <input type="text" placeholder="e.g. Sale, House, Hot..."
+                  value={mismatchRes[`${mm.transform}::${mm.sourceValue}`]||""}
+                  onChange={e=>setMismatchRes(p=>({...p,[`${mm.transform}::${mm.sourceValue}`]:e.target.value}))}
+                  style={{background:"#0d1d33",border:"1px solid #1a2d4a",borderRadius:6,color:"#e2e8f0",padding:"6px 10px",fontSize:12,outline:"none",width:"90%"}}/>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {dupeRows.size>0&&(
+        <div style={{marginBottom:28,padding:"18px 20px",background:"rgba(239,68,68,0.04)",border:"1px solid rgba(239,68,68,0.15)",borderRadius:10}}>
+          <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:8}}>
+            <h3 style={{fontSize:15,fontWeight:700,color:"#f87171",margin:0}}>👥 Duplicate Contacts</h3>
+            <Chip color="red">{dupeRows.size} rows</Chip>
+          </div>
+          <p style={{fontSize:13,color:"#475569",margin:"0 0 14px"}}>Contacts with identical first name + last name + email found. How should they be handled?</p>
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={()=>{const r={};dupeRows.forEach(i=>r[i]="keep");setDupeRes(r);}}
+              style={{padding:"8px 18px",borderRadius:6,border:"1px solid #1a2d4a",background:"transparent",color:"#64748b",fontSize:13,cursor:"pointer",fontWeight:600}}>
+              Keep all duplicates
+            </button>
+            <button onClick={()=>{const r={};dupeRows.forEach(i=>r[i]="skip");setDupeRes(r);}}
+              style={{padding:"8px 18px",borderRadius:6,border:"1px solid rgba(239,68,68,0.3)",background:"rgba(239,68,68,0.08)",color:"#f87171",fontSize:13,cursor:"pointer",fontWeight:600}}>
+              Skip duplicates (keep first)
+            </button>
+          </div>
+        </div>
+      )}
+
+      {mismatches.length===0&&dupeRows.size===0&&(
+        <div style={{padding:"20px",background:"rgba(34,197,94,0.04)",border:"1px solid rgba(34,197,94,0.15)",borderRadius:10,marginBottom:28,display:"flex",alignItems:"center",gap:14}}>
+          <span style={{fontSize:28}}>✅</span>
+          <div>
+            <div style={{fontWeight:700,color:"#4ade80"}}>No issues detected</div>
+            <div style={{color:"#475569",fontSize:13,marginTop:3}}>All value translations matched and no duplicate contacts found. Ready to generate.</div>
+          </div>
+        </div>
+      )}
+
+      {processing&&(
+        <div style={{marginBottom:20}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+            <span style={{fontSize:13,color:"#475569"}}>Processing rows…</span>
+            <span style={{fontSize:13,color:"#38bdf8",fontWeight:700}}>{progress}%</span>
+          </div>
+          <div style={{height:6,background:"#0d1d33",borderRadius:3,overflow:"hidden"}}>
+            <div style={{height:"100%",width:`${progress}%`,background:"linear-gradient(90deg,#0ea5e9,#6366f1)",transition:"width 0.2s",borderRadius:3}}/>
+          </div>
+        </div>
+      )}
+
+      <div style={{display:"flex",justifyContent:"flex-end"}}>
+        <button disabled={processing} onClick={run}
+          style={{padding:"13px 36px",borderRadius:8,border:"none",background:processing?"#0d1d33":"linear-gradient(135deg,#22c55e,#0ea5e9)",color:processing?"#1a2d4a":"#fff",fontWeight:800,fontSize:15,cursor:processing?"not-allowed":"pointer"}}>
+          {processing?"Processing…":"⚡ Generate Zenu Import Files"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── STAGE 4: EXPORT ──────────────────────────────────────────────────────────
+function ExportStage({result}){
+  const {mainCsv,errCsv,flagCsv,outputRows,errorRows,flagRows}=result;
+  return(
+    <div>
+      <div style={{textAlign:"center",marginBottom:36}}>
+        <div style={{fontSize:56,marginBottom:10}}>🎉</div>
+        <h2 style={{fontSize:26,fontWeight:900,color:"#f1f5f9",margin:"0 0 8px",letterSpacing:"-0.02em"}}>Migration Files Ready</h2>
+        <p style={{color:"#475569",fontSize:14}}>Output matches Zenu's exact 155-column import schema.</p>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14,marginBottom:30}}>
+        {[{label:"Ready to Import",val:outputRows.length,color:"#22c55e",icon:"✅"},{label:"Rows with Issues",val:errorRows.length,color:"#f87171",icon:"❌"},{label:"Conversion Flags",val:flagRows.length,color:"#fbbf24",icon:"⚠️"}].map(s=>(
+          <div key={s.label} style={{background:"#0d1d33",border:"1px solid #1a2d4a",borderRadius:12,padding:"22px 16px",textAlign:"center"}}>
+            <div style={{fontSize:24,marginBottom:6}}>{s.icon}</div>
+            <div style={{fontSize:32,fontWeight:900,color:s.color,letterSpacing:"-0.02em"}}>{s.val.toLocaleString()}</div>
+            <div style={{fontSize:12,color:"#334155",marginTop:4}}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {[
+          {label:"zenu_import.csv",desc:`155-column file ready to upload · ${outputRows.length.toLocaleString()} rows`,csv:mainCsv,fname:"zenu_import.csv",btn:"linear-gradient(135deg,#22c55e,#16a34a)",show:true},
+          {label:"error_report.csv",desc:`Rows that couldn't be imported and why · ${errorRows.length.toLocaleString()} rows`,csv:errCsv,fname:"error_report.csv",btn:"linear-gradient(135deg,#ef4444,#dc2626)",show:errorRows.length>0},
+          {label:"conversion_flags.csv",desc:`Rows where values were auto-converted · ${flagRows.length.toLocaleString()} rows`,csv:flagCsv,fname:"conversion_flags.csv",btn:"linear-gradient(135deg,#f59e0b,#d97706)",show:flagRows.length>0},
+        ].filter(f=>f.show).map(f=>(
+          <div key={f.label} style={{background:"#0d1d33",border:"1px solid #1a2d4a",borderRadius:12,padding:"18px 22px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:16}}>
+            <div style={{display:"flex",alignItems:"center",gap:14}}>
+              <span style={{fontSize:24}}>📋</span>
+              <div>
+                <div style={{fontWeight:700,color:"#e2e8f0",fontSize:15}}>{f.label}</div>
+                <div style={{fontSize:12,color:"#334155",marginTop:2}}>{f.desc}</div>
+              </div>
+            </div>
+            <button onClick={()=>downloadFile(f.csv,f.fname)}
+              style={{padding:"10px 22px",borderRadius:8,border:"none",background:f.btn,color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",whiteSpace:"nowrap"}}>
+              ↓ Download
+            </button>
+          </div>
+        ))}
+      </div>
+      {errorRows.length>0&&(
+        <div style={{marginTop:28}}>
+          <h3 style={{fontSize:14,fontWeight:700,color:"#f87171",marginBottom:10}}>Sample Issues (first 10)</h3>
+          <div style={{background:"#070d1a",borderRadius:10,border:"1px solid #0d1d33",overflow:"hidden"}}>
+            <div style={{display:"grid",gridTemplateColumns:"110px 55px 140px 1fr",padding:"8px 16px",background:"#0d1d33",fontSize:11,fontWeight:700,color:"#334155",textTransform:"uppercase",letterSpacing:"0.08em"}}>
+              <div>File</div><div>Row</div><div>Field</div><div>Reason</div>
+            </div>
+            {errorRows.slice(0,10).map((e,i)=>(
+              <div key={i} style={{display:"grid",gridTemplateColumns:"110px 55px 140px 1fr",padding:"8px 16px",borderBottom:"1px solid #0d1d33",fontSize:12}}>
+                <div style={{color:"#334155",fontFamily:"monospace"}}>{(e.file||"").replace(".csv","")}</div>
+                <div style={{color:"#334155"}}>{e.row}</div>
+                <div style={{color:"#fbbf24",fontFamily:"monospace"}}>{e.field}</div>
+                <div style={{color:"#64748b"}}>{e.reason}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <div style={{marginTop:22,padding:"16px 20px",background:"#0d1d33",border:"1px solid #1a2d4a",borderRadius:10,fontSize:13,color:"#334155",lineHeight:1.6}}>
+        💡 <strong style={{color:"#64748b"}}>Next step:</strong> In Zenu go to Settings → Import → upload <code style={{color:"#38bdf8",background:"rgba(14,165,233,0.08)",padding:"1px 6px",borderRadius:3}}>zenu_import.csv</code>. For 300K+ note rows, split into 50K-row batches before uploading.
+      </div>
+    </div>
+  );
+}
+
+// ─── APP ──────────────────────────────────────────────────────────────────────
+function App(){
+  const [step,setStep]=useState(0);
+  const [uploadData,setUploadData]=useState(null);
+  const [mappingData,setMappingData]=useState(null);
+  return(
+    <div style={{minHeight:"100vh",background:"#070d1a",fontFamily:"'Segoe UI',system-ui,sans-serif",color:"#e2e8f0"}}>
+      <div style={{borderBottom:"1px solid #0d1d33",padding:"0 40px",display:"flex",alignItems:"center",justifyContent:"space-between",height:60,background:"rgba(7,13,26,0.96)",position:"sticky",top:0,zIndex:100}}>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <div style={{width:32,height:32,borderRadius:8,background:"linear-gradient(135deg,#0ea5e9,#6366f1)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>⚡</div>
+          <div>
+            <div style={{fontWeight:900,fontSize:15,letterSpacing:"-0.02em",color:"#f1f5f9"}}>Zenu Migration Tool</div>
+            <div style={{fontSize:10,color:"#1a2d4a",letterSpacing:"0.1em",textTransform:"uppercase"}}>CRM Data Import</div>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+          <span style={{fontSize:11,color:"#1a2d4a",marginRight:4}}>CRMs:</span>
+          {[["MRI Eagle",true],["Reapit",false],["MRI Vault",false],["Box+Dice",false],["Rex",false]].map(([n,a])=>(
+            <span key={n} style={{padding:"3px 10px",borderRadius:20,fontSize:11,fontWeight:600,background:a?"rgba(34,197,94,0.1)":"transparent",color:a?"#4ade80":"#1a2d4a",border:`1px solid ${a?"rgba(34,197,94,0.25)":"#0d1d33"}`}}>{n}{a?" ✓":""}</span>
+          ))}
+        </div>
+      </div>
+      <div style={{maxWidth:920,margin:"0 auto",padding:"40px 24px"}}>
+        <StepBar current={step}/>
+        <div style={{background:"#0a1525",border:"1px solid #0d1d33",borderRadius:16,padding:"36px 40px",boxShadow:"0 32px 96px rgba(0,0,0,0.5)"}}>
+          {step===0&&<UploadStage onComplete={d=>{setUploadData(d);setStep(1);}}/>}
+          {step===1&&uploadData&&<MappingStage uploadData={uploadData} onComplete={d=>{setMappingData(d);setStep(2);}}/>}
+          {step===2&&mappingData&&<ReviewStage mappingData={mappingData} onComplete={()=>setStep(3)}/>}
+        </div>
+        <div style={{marginTop:14,textAlign:"center",fontSize:11,color:"#0d1d33"}}>Zenu Migration Tool · 155-column exact schema · MRI Eagle v1 · v2.0</div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
