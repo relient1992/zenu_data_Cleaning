@@ -41,8 +41,11 @@
                 Load JSON
                 <input type="file" id="importInput" accept=".json" class="hidden" />
             </label>
-            <button onclick="exportMapping()" class="bg-slate-800 hover:bg-slate-900 text-white px-4 py-1.5 rounded-md text-sm font-medium transition-colors shadow-sm">
+            <button onclick="openExportModal()" class="bg-slate-800 hover:bg-slate-900 text-white px-4 py-1.5 rounded-md text-sm font-medium transition-colors shadow-sm">
                 Save & Export
+            </button>
+            <button onclick="openRunModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded-md text-sm font-bold transition-colors shadow-sm ml-2">
+                🚀 Run Migration
             </button>
         </div>
     </header>
@@ -95,6 +98,12 @@
                     </select>
                 </div>
                 <div class="mt-5 flex gap-2">
+                    <button onclick="bulkRenameSources()" class="bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 px-3 py-1.5 rounded-md text-sm font-medium transition-colors whitespace-nowrap" title="Find and replace text in source files">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 inline mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
+                        Bulk Rename
+                    </button>
                     <button onclick="duplicateGroup()" class="bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 px-3 py-1.5 rounded-md text-sm font-medium transition-colors whitespace-nowrap" title="Duplicate current group">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 inline mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
@@ -124,6 +133,36 @@
 
     </main>
 
+    <div id="runModal" class="fixed inset-0 bg-slate-900/50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6 flex flex-col">
+            <div class="shrink-0 mb-4">
+                <h3 class="text-lg font-bold text-slate-900 mb-1">Run Migration Engine</h3>
+                <p class="text-sm text-slate-500">Select which groups to process and generate.</p>
+            </div>
+            <div class="overflow-y-auto max-h-64 mb-4 border border-slate-200 rounded-md p-2" id="runGroupList">
+                </div>
+            <div class="flex justify-end gap-3 pt-4 border-t border-slate-100">
+                <button onclick="closeRunModal()" class="px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-md transition-colors">Cancel</button>
+                <button onclick="executeMigration(event)" id="executeMigrationBtn" class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md shadow-sm transition-colors">🚀 Send to Engine</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="exportModal" class="fixed inset-0 bg-slate-900/50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6 flex flex-col">
+            <div class="shrink-0 mb-4">
+                <h3 class="text-lg font-bold text-slate-900 mb-1">Export Mapping Rules</h3>
+                <p class="text-sm text-slate-500">Select which groups to include in your JSON export.</p>
+            </div>
+            <div class="overflow-y-auto max-h-64 mb-4 border border-slate-200 rounded-md p-2" id="exportGroupList">
+                </div>
+            <div class="flex justify-end gap-3 pt-4 border-t border-slate-100">
+                <button onclick="closeExportModal()" class="px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-md transition-colors">Cancel</button>
+                <button onclick="executeExport()" class="px-4 py-2 text-sm font-medium text-white bg-slate-800 hover:bg-slate-900 rounded-md shadow-sm transition-colors">Download Selected</button>
+            </div>
+        </div>
+    </div>
+
     <div id="instructionModal" class="fixed inset-0 bg-slate-900/50 hidden items-center justify-center z-50">
         <div class="bg-white rounded-lg shadow-xl w-full max-w-lg p-6 max-h-[90vh] flex flex-col">
             <div class="shrink-0 mb-4">
@@ -134,9 +173,9 @@
             <div class="overflow-y-auto flex-1 pr-2">
                 <div class="mb-5">
                     <label class="block text-sm font-medium text-slate-700 mb-2">Connected Sources</label>
-                    <div id="modalSourcesList" class="bg-slate-50 border border-slate-200 rounded-md p-2 space-y-1">
+                    <div id="modalSourcesList" class="space-y-2">
                         </div>
-                    <p class="text-xs text-slate-400 mt-2">💡 Drag more fields onto this target field to add them here.</p>
+                    <p class="text-xs text-slate-400 mt-2">💡 Drag fields to add, or type directly in the boxes above to edit them manually.</p>
                 </div>
 
                 <label class="block text-sm font-medium text-slate-700 mb-1">Mapping Action</label>
@@ -195,6 +234,8 @@
         const mappingGroupSelect = document.getElementById('mappingGroupSelect');
         const mappingTable = document.getElementById('mappingTable');
         const modal = document.getElementById('instructionModal');
+        const exportModal = document.getElementById('exportModal');
+        const runModal = document.getElementById('runModal');
 
         // --- Event Listeners ---
         sourceInput.addEventListener('change', async (e) => {
@@ -290,7 +331,6 @@
         function extractHeaders(file) {
             return new Promise((resolve) => {
                 const reader = new FileReader();
-                // FIX: Increased from 4096 (4KB) to 65536 (64KB) to support CSV files with 170+ wide columns
                 const blob = file.slice(0, 65536); 
                 reader.onload = (e) => {
                     const text = e.target.result;
@@ -303,7 +343,6 @@
             });
         }
 
-        // --- Custom Dummy Target Field Logic ---
         function addVirtualFileOption() {
             const exists = Array.from(sourceFileSelect.options).some(opt => opt.value === VIRTUAL_FILE_NAME);
             if (!exists) {
@@ -426,6 +465,42 @@
             });
         }
 
+        // --- Bulk Replace Source Strings ---
+        function bulkRenameSources() {
+            const findText = prompt("Enter the exact text to find in source file names (e.g., '1 '):");
+            if (findText === null) return; 
+            const replaceText = prompt(`Replace "${findText}" with (leave blank to just remove it):`, "") || "";
+            
+            let updateCount = 0;
+            
+            Object.keys(mappings).forEach(group => {
+                mappings[group].forEach(rule => {
+                    // Update main source files
+                    if (rule.sources) {
+                        rule.sources.forEach(src => {
+                            if (src.file && src.file.includes(findText)) {
+                                src.file = src.file.replaceAll(findText, replaceText);
+                                updateCount++;
+                            }
+                        });
+                    }
+                    // Update lookup target files
+                    if (rule.lookupConfig) {
+                        const lookups = Array.isArray(rule.lookupConfig) ? rule.lookupConfig : [rule.lookupConfig];
+                        lookups.forEach(lkp => {
+                            if (lkp.targetFile && lkp.targetFile.includes(findText)) {
+                                lkp.targetFile = lkp.targetFile.replaceAll(findText, replaceText);
+                                updateCount++;
+                            }
+                        });
+                    }
+                });
+            });
+            
+            alert(`Success! Updated ${updateCount} references across your workspace.`);
+            renderMappingTable();
+        }
+
         // --- Group Management & UI Modal Logic ---
         function createNewGroup() {
             const groupName = prompt("Enter a name for the new mapping result:");
@@ -498,15 +573,6 @@
             }
         }
 
-        function getLookupOptionsHtml(selectedValue = '') {
-            let html = '<option value="">-- Select File --</option>';
-            Object.keys(sourceData).forEach(file => {
-                const selected = (file === selectedValue) ? 'selected' : '';
-                html += `<option value="${file}" ${selected}>${file}</option>`;
-            });
-            return html;
-        }
-
         function addLookupRow(data = null) {
             const container = document.getElementById('lookupRowsContainer');
             const targetFile = data ? (data.targetFile || '') : '';
@@ -515,6 +581,8 @@
 
             const row = document.createElement('div');
             row.className = 'lookup-row bg-white p-3 border border-slate-200 rounded-md relative group';
+            
+            // Note: lookup files are now editable inputs instead of strict dropdowns to allow for custom names
             row.innerHTML = `
                 <button type="button" onclick="this.closest('.lookup-row').remove()" class="absolute top-2 right-2 text-slate-400 hover:text-red-500 hidden group-hover:block transition-colors" title="Remove this Lookup">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
@@ -522,11 +590,11 @@
                 <div class="grid grid-cols-1 gap-3 pr-6">
                     <div>
                         <label class="block text-xs font-semibold text-slate-600 mb-1">Look inside this file:</label>
-                        <select class="lookup-file w-full border border-slate-300 rounded-md p-1.5 text-sm outline-none focus:border-indigo-500">${getLookupOptionsHtml(targetFile)}</select>
+                        <input type="text" class="lookup-file w-full border border-slate-300 rounded-md p-1.5 text-sm outline-none focus:border-indigo-500 font-mono text-slate-600" placeholder="e.g., agent.csv" value="${targetFile}">
                     </div>
                     <div>
                         <label class="block text-xs font-semibold text-slate-600 mb-1">Where ID matches (Foreign Key):</label>
-                        <input type="text" placeholder="e.g., [S1] or note_id" class="lookup-match w-full border border-slate-300 rounded-md p-1.5 text-sm outline-none focus:border-indigo-500" value="${matchKey}">
+                        <input type="text" placeholder="e.g., [S1] or note_id" class="lookup-match w-full border border-slate-300 rounded-md p-1.5 text-sm outline-none focus:border-indigo-500 font-mono text-indigo-600" value="${matchKey}">
                     </div>
                     <div>
                         <label class="block text-xs font-semibold text-slate-600 mb-1">And extract these fields (comma separated):</label>
@@ -537,20 +605,42 @@
             container.appendChild(row);
         }
 
+        // --- Editable Modal Source Functions ---
+        function updateSourceFile(varId, newValue) {
+            const src = activeRule.sources.find(s => s.varId === varId);
+            if (src) src.file = newValue.trim();
+        }
+
+        function updateSourceField(varId, newValue) {
+            const src = activeRule.sources.find(s => s.varId === varId);
+            if (src) src.field = newValue.trim();
+        }
+
         function renderModalSources() {
             const list = document.getElementById('modalSourcesList');
-            list.innerHTML = activeRule.sources.map(s => `
-                <div class="flex justify-between items-center text-sm bg-white border border-slate-200 p-2 rounded shadow-sm">
-                    <div class="flex items-center gap-2">
-                        <span class="font-bold text-indigo-700 text-xs bg-indigo-100 px-1.5 py-0.5 rounded font-mono">[${s.varId}]</span>
-                        <span class="text-xs text-slate-500 font-mono">${s.file === VIRTUAL_FILE_NAME ? '⭐ DUMMY' : s.file}</span> 
-                        <span class="font-medium text-slate-800">${s.field}</span>
+            list.innerHTML = activeRule.sources.map(s => {
+                const isDummy = s.file === VIRTUAL_FILE_NAME;
+                
+                const fileDisplay = isDummy 
+                    ? `<span class="text-xs text-slate-500 font-mono bg-slate-100 border border-slate-200 rounded px-1.5 py-1">⭐ DUMMY</span>`
+                    : `<input type="text" value="${s.file}" onchange="updateSourceFile('${s.varId}', this.value)" class="text-xs font-mono bg-white border border-slate-300 rounded px-1.5 py-1 w-32 outline-none focus:border-indigo-500 transition-colors" placeholder="File name">`;
+                
+                const fieldDisplay = `<input type="text" value="${s.field}" onchange="updateSourceField('${s.varId}', this.value)" class="text-sm font-medium text-slate-800 bg-white border border-slate-300 rounded px-1.5 py-1 flex-1 outline-none focus:border-indigo-500 transition-colors" placeholder="Field name">`;
+
+                return `
+                <div class="flex justify-between items-center text-sm bg-slate-50 border border-slate-200 p-2 rounded shadow-sm">
+                    <div class="flex items-center gap-2 flex-1 pr-2">
+                        <span class="font-bold text-indigo-700 text-xs bg-indigo-100 px-1.5 py-0.5 rounded font-mono shrink-0">[${s.varId}]</span>
+                        ${fileDisplay}
+                        <span class="text-slate-400 font-bold">></span>
+                        ${fieldDisplay}
                     </div>
-                    <button onclick="removeSource('${s.varId}')" class="text-slate-400 hover:text-red-500 bg-slate-50 hover:bg-red-50 p-1.5 rounded transition-colors" title="Remove Source">
+                    <button onclick="removeSource('${s.varId}')" class="text-slate-400 hover:text-red-500 bg-white border border-slate-200 hover:bg-red-50 p-1.5 rounded transition-colors shrink-0" title="Remove Source">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                     </button>
                 </div>
-            `).join('');
+                `;
+            }).join('');
             
             toggleRuleUI(); 
         }
@@ -665,8 +755,8 @@
                 const rows = document.querySelectorAll('.lookup-row');
                 ruleToSave.lookupConfig = [];
                 rows.forEach(row => {
-                    const targetFile = row.querySelector('.lookup-file').value;
-                    const matchKey = row.querySelector('.lookup-match').value;
+                    const targetFile = row.querySelector('.lookup-file').value.trim();
+                    const matchKey = row.querySelector('.lookup-match').value.trim();
                     const extractFields = row.querySelector('.lookup-extract').value.split(',').map(s => s.trim()).filter(s => s);
                     
                     if (targetFile || matchKey || extractFields.length > 0) {
@@ -674,7 +764,7 @@
                     }
                 });
             } else if (action === 'concat' || action === 'static') {
-                ruleToSave.valueExpression = document.getElementById('specialValue').value;
+                ruleToSave.valueExpression = document.getElementById('specialValue').value.trim();
             }
 
             if (editingMappingId) {
@@ -748,7 +838,6 @@
 
                 const notesHtml = m.notes ? `<div class="mt-2 text-xs text-slate-500 italic border-l-2 border-slate-200 pl-2">Notes: ${m.notes}</div>` : '';
                 
-                // Show a star for dummy target fields
                 const displayTarget = customTargetFields.includes(m.targetField) ? `⭐ ${m.targetField}` : m.targetField;
 
                 tr.innerHTML = `
@@ -779,17 +868,159 @@
             });
         }
 
-        function exportMapping() {
-            const hasData = Object.values(mappings).some(group => group.length > 0);
-            if (!hasData) return alert("Your workspace is empty. Nothing to export.");
+        // --- Selective Export Functions ---
+        function openExportModal() {
+            const exportList = document.getElementById('exportGroupList');
+            exportList.innerHTML = '';
+            
+            const groupsWithData = Object.keys(mappings).filter(group => mappings[group].length > 0);
+            
+            if (groupsWithData.length === 0) {
+                return alert("Your workspace is empty. Nothing to export.");
+            }
 
-            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(mappings, null, 2));
+            exportList.innerHTML += `
+                <label class="flex items-center gap-2 p-2 hover:bg-slate-50 rounded cursor-pointer border-b border-slate-100 mb-1">
+                    <input type="checkbox" checked onchange="document.querySelectorAll('.export-checkbox').forEach(cb => cb.checked = this.checked)" class="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500">
+                    <span class="text-sm font-bold text-slate-700">Select All</span>
+                </label>
+            `;
+
+            groupsWithData.forEach(group => {
+                exportList.innerHTML += `
+                    <label class="flex items-center gap-2 p-2 hover:bg-slate-50 rounded cursor-pointer">
+                        <input type="checkbox" value="${group}" checked class="export-checkbox w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500">
+                        <span class="text-sm font-medium text-slate-700">${group} <span class="text-xs text-slate-400 ml-1">(${mappings[group].length} rules)</span></span>
+                    </label>
+                `;
+            });
+
+            exportModal.classList.remove('hidden');
+            exportModal.classList.add('flex');
+        }
+
+        function closeExportModal() {
+            exportModal.classList.add('hidden');
+            exportModal.classList.remove('flex');
+        }
+
+        function executeExport() {
+            const selectedGroups = Array.from(document.querySelectorAll('.export-checkbox:checked')).map(cb => cb.value);
+            
+            if (selectedGroups.length === 0) {
+                return alert("Please select at least one group to export.");
+            }
+
+            const filteredMappings = {};
+            selectedGroups.forEach(group => {
+                filteredMappings[group] = mappings[group];
+            });
+
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(filteredMappings, null, 2));
             const downloadAnchorNode = document.createElement('a');
             downloadAnchorNode.setAttribute("href", dataStr);
             downloadAnchorNode.setAttribute("download", "agentbox_to_zenu_schema.json");
             document.body.appendChild(downloadAnchorNode); 
             downloadAnchorNode.click();
             downloadAnchorNode.remove();
+            
+            closeExportModal();
+        }
+
+        // --- Selective Run Migration Functions ---
+        function openRunModal() {
+            const sourceFiles = document.getElementById('sourceInput').files;
+            if (sourceFiles.length === 0) {
+                return alert("Please upload your Source Folder (CSVs) first.");
+            }
+
+            const runList = document.getElementById('runGroupList');
+            runList.innerHTML = '';
+            
+            const groupsWithData = Object.keys(mappings).filter(group => mappings[group].length > 0);
+            
+            if (groupsWithData.length === 0) {
+                return alert("Your workspace is empty. Please create rules or load a JSON file.");
+            }
+
+            runList.innerHTML += `
+                <label class="flex items-center gap-2 p-2 hover:bg-slate-50 rounded cursor-pointer border-b border-slate-100 mb-1">
+                    <input type="checkbox" checked onchange="document.querySelectorAll('.run-checkbox').forEach(cb => cb.checked = this.checked)" class="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500">
+                    <span class="text-sm font-bold text-slate-700">Select All</span>
+                </label>
+            `;
+
+            groupsWithData.forEach(group => {
+                runList.innerHTML += `
+                    <label class="flex items-center gap-2 p-2 hover:bg-slate-50 rounded cursor-pointer">
+                        <input type="checkbox" value="${group}" checked class="run-checkbox w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500">
+                        <span class="text-sm font-medium text-slate-700">${group} <span class="text-xs text-slate-400 ml-1">(${mappings[group].length} rules)</span></span>
+                    </label>
+                `;
+            });
+
+            runModal.classList.remove('hidden');
+            runModal.classList.add('flex');
+        }
+
+        function closeRunModal() {
+            runModal.classList.add('hidden');
+            runModal.classList.remove('flex');
+        }
+
+        async function executeMigration(event) {
+            const selectedGroups = Array.from(document.querySelectorAll('.run-checkbox:checked')).map(cb => cb.value);
+            
+            if (selectedGroups.length === 0) {
+                return alert("Please select at least one group to process.");
+            }
+
+            const filteredMappings = {};
+            selectedGroups.forEach(group => {
+                filteredMappings[group] = mappings[group];
+            });
+
+            const sourceFiles = document.getElementById('sourceInput').files;
+
+            const mappingBlob = new Blob([JSON.stringify(filteredMappings)], { type: 'application/json' });
+            const mappingFile = new File([mappingBlob], "mapping_rules.json");
+
+            const formData = new FormData();
+            formData.append("mapping_file", mappingFile);
+            
+            for (let i = 0; i < sourceFiles.length; i++) {
+                formData.append("csv_files", sourceFiles[i]);
+            }
+
+            try {
+                const btn = document.getElementById('executeMigrationBtn');
+                const originalText = btn.innerText;
+                btn.innerText = "⏳ Processing...";
+                btn.disabled = true;
+
+                const response = await fetch("http://127.0.0.1:8000/api/run-migration", {
+                    method: "POST",
+                    body: formData
+                });
+
+                const result = await response.json();
+                
+                if (response.ok) {
+                    alert("Success! Job ID: " + result.job_id + "\nCheck your VS Code terminal and file explorer to watch it process.");
+                    closeRunModal();
+                } else {
+                    alert("Error from server: " + result.message);
+                }
+
+                btn.innerText = originalText;
+                btn.disabled = false;
+
+            } catch (error) {
+                alert("Failed to connect to the Python Engine. Is uvicorn running in your terminal?");
+                console.error(error);
+                document.getElementById('executeMigrationBtn').disabled = false;
+                document.getElementById('executeMigrationBtn').innerText = "🚀 Send to Engine";
+            }
         }
         
         // Init
