@@ -9,12 +9,20 @@ class MigrationEngine:
     def __init__(self, job_id, workspace, source_crm="Agentbox"):
         self.job_id = job_id
         self.workspace = workspace
-        self.source_crm = source_crm  # Stores the CRM choice from the frontend
+        self.source_crm = source_crm  
         self.db_path = os.path.join(self.workspace, f"{job_id}_raw_data.db")
+        self.log_path = os.path.join(self.workspace, "process.log") # NEW: Live log file
         self.conn = sqlite3.connect(self.db_path)
         
+    def log(self, message):
+        """Prints to terminal AND writes to the live log file for the web UI."""
+        print(message)
+        with open(self.log_path, "a", encoding="utf-8") as f:
+            f.write(message + "\n")
+            f.flush()
+        
     def load_csvs_to_sqlite(self):
-        print(f"[{self.job_id}] Building SQLite Database for {self.source_crm}...")
+        self.log(f"[{self.job_id}] Building SQLite Database for {self.source_crm}...")
         for file in os.listdir(self.workspace):
             if file.endswith('.csv'):
                 table_name = file
@@ -34,30 +42,30 @@ class MigrationEngine:
                         for chunk in pd.read_csv(file_path, chunksize=chunksize, low_memory=False, encoding=enc, on_bad_lines='skip'):
                             chunk.to_sql(table_name, self.conn, if_exists='append', index=False)
                         
-                        print(f"[{self.job_id}] Loaded {file} successfully using '{enc}' encoding.")
+                        self.log(f"[{self.job_id}] Loaded {file} successfully using '{enc}' encoding.")
                         loaded = True
                     except Exception as e:
                         error_msg = str(e).lower()
                         if "codec can't decode" in error_msg or "utf-8" in error_msg or "encoding" in error_msg:
-                            print(f"[{self.job_id}] '{enc}' encoding failed for {file}. Trying next...")
+                            self.log(f"[{self.job_id}] '{enc}' encoding failed for {file}. Trying next...")
                         else:
-                            print(f"[{self.job_id}] Warning: Could not load {file} - {e}")
+                            self.log(f"[{self.job_id}] Warning: Could not load {file} - {e}")
                             break
                             
                 if not loaded:
-                    print(f"[{self.job_id}] All strict encodings failed. Forcing load with error replacement for {file}...")
+                    self.log(f"[{self.job_id}] All strict encodings failed. Forcing load with error replacement for {file}...")
                     try:
                         cursor = self.conn.cursor()
                         cursor.execute(f'DROP TABLE IF EXISTS "{table_name}"')
                         self.conn.commit()
                         for chunk in pd.read_csv(file_path, chunksize=chunksize, low_memory=False, encoding='utf-8', on_bad_lines='skip', encoding_errors='replace'):
                             chunk.to_sql(table_name, self.conn, if_exists='append', index=False)
-                        print(f"[{self.job_id}] Loaded {file} successfully using fallback replacement mode.")
+                        self.log(f"[{self.job_id}] Loaded {file} successfully using fallback replacement mode.")
                     except Exception as e:
-                        print(f"[{self.job_id}] CRITICAL: Completely failed to load {file}. Error: {e}")
+                        self.log(f"[{self.job_id}] CRITICAL: Completely failed to load {file}. Error: {e}")
 
     def run_mapping(self, mapping_json_path):
-        print(f"[{self.job_id}] Reading JSON Mapping Rules...")
+        self.log(f"[{self.job_id}] Reading JSON Mapping Rules...")
         with open(mapping_json_path, 'r') as f:
             rules = json.load(f)
             
@@ -68,7 +76,7 @@ class MigrationEngine:
     def _process_group(self, group_name, rules):
         zenu_output = pd.DataFrame()
         
-        print(f"[{self.job_id}] Processing Group: {group_name} using {self.source_crm} logic")
+        self.log(f"[{self.job_id}] Processing Group: {group_name} using {self.source_crm} logic")
 
         # ==========================================
         # ROUTE 1: AGENTBOX MIGRATION LOGIC
@@ -78,13 +86,12 @@ class MigrationEngine:
             # 1. Determine the Default Base Table
             source_files = [rule.get("sources", [{}])[0].get("file") for rule in rules if rule.get("sources")]
             if not source_files:
-                print(f"[{self.job_id}] Skipping {group_name}: No base file found.")
+                self.log(f"[{self.job_id}] Skipping {group_name}: No base file found.")
                 return
                 
             from collections import Counter
             base_file = Counter([f for f in source_files if f]).most_common(1)[0][0]
 
-            # FORCE SPINE: Ensure Contact_Notes always uses the junction table as the base
             if group_name == "Contact_Notes":
                 base_file = "note_x_contact.csv"
 
@@ -107,16 +114,14 @@ class MigrationEngine:
                     else:
                         base_df = pd.read_sql_query(f'SELECT * FROM "{base_file}"', self.conn)
                 except Exception as e:
-                    print(f"[{self.job_id}] Error building split contact base table: {e}")
+                    self.log(f"[{self.job_id}] Error building split contact base table: {e}")
                     return
                     
-            # Handle Prospect Owners and Appraisal Owners with the exact same 1-to-many merge logic
             elif group_name in ["Prospect Owners", "Appraisal Owners"]:
                 try:
                     base_df = pd.read_sql_query(f'SELECT * FROM "{base_file}"', self.conn)
                     base_df.columns = base_df.columns.str.strip().str.lower()
                     
-                    # STRICT PRE-FILTER: Owners must only contain specific Seller roles
                     if 'role' in base_df.columns:
                         allowed_roles = ['owner', 'owner_occupier', 'landlord', 'owner_absentee', 'vendor', 'prospective_vendor']
                         base_df = base_df[base_df['role'].astype(str).str.strip().str.lower().isin(allowed_roles)]
@@ -129,19 +134,31 @@ class MigrationEngine:
                     if clean_file:
                         clean_df = pd.read_sql_query(f'SELECT * FROM "{clean_file}"', self.conn)
                         match_col = 'Raw_ORIG_CONTACT_IDENTIFIER' if 'Raw_ORIG_CONTACT_IDENTIFIER' in clean_df.columns else 'Raw ORIG CONTACT_IDENTIFIER'
-                        
-                        # 1-to-Many MERGE: This duplicates the property row for every split contact!
                         base_df = pd.merge(clean_df, base_df, left_on=match_col, right_on='contact_id', how='inner')
                 except Exception as e:
-                     print(f"[{self.job_id}] Error building split {group_name} base table: {e}")
+                     self.log(f"[{self.job_id}] Error building split {group_name} base table: {e}")
                      return
                      
+            elif group_name == "Listing Vendor":
+                try:
+                    # Listing Vendor specifically avoids the split 1-to-Many merge, using standard isolated load
+                    base_df = pd.read_sql_query(f'SELECT * FROM "{base_file}"', self.conn)
+                    base_df.columns = base_df.columns.str.strip().str.lower()
+                    
+                    # STRICT PRE-FILTER: Owners must only contain specific Seller roles
+                    if 'role' in base_df.columns:
+                        allowed_roles = ['owner', 'owner_occupier', 'landlord', 'owner_absentee', 'vendor', 'prospective_vendor']
+                        base_df = base_df[base_df['role'].astype(str).str.strip().str.lower().isin(allowed_roles)]
+                except Exception as e:
+                     self.log(f"[{self.job_id}] Error building {group_name} base table: {e}")
+                     return
+
             else:
                 try:
                     base_df = pd.read_sql_query(f'SELECT * FROM "{base_file}"', self.conn)
                     base_df.columns = base_df.columns.str.strip().str.lower()
                 except Exception as e:
-                     print(f"[{self.job_id}] Error loading base table {base_file}: {e}")
+                     self.log(f"[{self.job_id}] Error loading base table {base_file}: {e}")
                      return
 
             # ---------------------------------------------------------
@@ -152,10 +169,13 @@ class MigrationEngine:
             agent_mapping, note_to_listing, listing_to_prop, prop_mapping = {}, {}, {}, {}
             appraisal_agents_map = {}
             prospect_agents_map = {}
-            appraisal_listing_ids_set = set() # Valid Appraisal Checker Set
+            appraisal_listing_ids_set = set()
+            sale_lease_listing_ids_set = set()
+            vendor_solicitor_map = {}
 
-            if group_name in ["Contact_Notes", "Appraisal", "Prospect", "Prospect Owners", "Appraisal Owners"]:
+            if group_name in ["Contact_Notes", "Appraisal", "Prospect", "Prospect Owners", "Appraisal Owners", "Listing Vendor"]:
                 try:
+                    self.log(f"[{self.job_id}] Generating Dictionaries...")
                     clean_df = pd.read_sql_query('SELECT * FROM "contact_cleaned.csv"', self.conn)
                     match_col = 'Raw_ORIG_CONTACT_IDENTIFIER' if 'Raw_ORIG_CONTACT_IDENTIFIER' in clean_df.columns else 'Raw ORIG CONTACT_IDENTIFIER'
                     clean_df['CONTACT_IDENTIFIER'] = clean_df['CONTACT_IDENTIFIER'].astype(str)
@@ -259,16 +279,29 @@ class MigrationEngine:
                         prop_df['formatted_address'] = prop_df.apply(format_address, axis=1)
                         prop_mapping = prop_df.set_index('property_id')['formatted_address'].to_dict()
 
-                except Exception as e: print(f"[{self.job_id}] Warning: Error building Maps: {e}")
+                except Exception as e: self.log(f"[{self.job_id}] Warning: Error building Maps: {e}")
 
-            # Appraisal ID Checker Set for Appraisal Owners
             if group_name == "Appraisal Owners":
                 try:
                     appr_check_df = pd.read_sql_query('SELECT * FROM "listing_appraisal.csv"', self.conn)
                     appr_check_df.columns = appr_check_df.columns.str.strip().str.lower()
                     if 'listing_id' in appr_check_df.columns:
                         appraisal_listing_ids_set = set(appr_check_df['listing_id'].astype(str).str.replace(r'\.0$', '', regex=True).unique())
-                except Exception as e: print(f"[{self.job_id}] Warning: Error building Appraisal validation set: {e}")
+                except Exception as e: self.log(f"[{self.job_id}] Warning: Error building Appraisal validation set: {e}")
+
+            if group_name == "Listing Vendor":
+                try:
+                    sl_df = pd.read_sql_query('SELECT listing_id FROM "listing_sale.csv"', self.conn)
+                    ll_df = pd.read_sql_query('SELECT listing_id FROM "listing_lease.csv"', self.conn)
+                    sl_ids = sl_df['listing_id'].astype(str).str.replace(r'\.0$', '', regex=True) if 'listing_id' in sl_df.columns else pd.Series(dtype=str)
+                    ll_ids = ll_df['listing_id'].astype(str).str.replace(r'\.0$', '', regex=True) if 'listing_id' in ll_df.columns else pd.Series(dtype=str)
+                    sale_lease_listing_ids_set = set(pd.concat([sl_ids, ll_ids]).unique())
+                    
+                    lxc_df = pd.read_sql_query('SELECT listing_id, contact_id, role FROM "listing_x_contact.csv"', self.conn)
+                    lxc_df.columns = lxc_df.columns.str.strip().str.lower()
+                    solicitors = lxc_df[lxc_df['role'].astype(str).str.strip().str.lower() == 'vendor_solicitor']
+                    vendor_solicitor_map = solicitors.set_index('listing_id')['contact_id'].to_dict()
+                except Exception as e: self.log(f"[{self.job_id}] Warning: Error building Listing Vendor validation sets: {e}")
 
             if group_name == "Appraisal":
                 try:
@@ -293,7 +326,7 @@ class MigrationEngine:
                             if name:
                                 if lid not in appraisal_agents_map: appraisal_agents_map[lid] = []
                                 if name not in appraisal_agents_map[lid]: appraisal_agents_map[lid].append(name)
-                except Exception as e: print(f"[{self.job_id}] Warning: Error building Appraisal maps: {e}")
+                except Exception as e: self.log(f"[{self.job_id}] Warning: Error building Appraisal maps: {e}")
 
             elif group_name == "Prospect":
                 try:
@@ -312,7 +345,8 @@ class MigrationEngine:
                             if name:
                                 if pid not in prospect_agents_map: prospect_agents_map[pid] = []
                                 if name not in prospect_agents_map[pid]: prospect_agents_map[pid].append(name)
-                except Exception as e: print(f"[{self.job_id}] Warning: Error building Prospect maps: {e}")
+                except Exception as e: self.log(f"[{self.job_id}] Warning: Error building Prospect maps: {e}")
+
 
             # ---------------------------------------------------------
             # 4. PROCESS THE RULES LOOP
@@ -325,7 +359,6 @@ class MigrationEngine:
                 # --- OVERRIDE: APPRAISAL OWNERS ---
                 if group_name == "Appraisal Owners":
                     if target_field == "property_identifier":
-                        # Uses listing_id to link back to Appraisals
                         s1_col = str(sources[0].get("field")).strip().lower() if sources else 'listing_id'
                         
                         def format_appr_owner_id(x):
@@ -334,18 +367,15 @@ class MigrationEngine:
                             if x_str.lower() in ['nan', 'none', 'null', '']: return pd.NA
                             x_clean = re.sub(r'\.0$', '', x_str)
                             
-                            # THE CHECKER: Only prefix with Appr_ if it actually exists in listing_appraisal.csv
+                            # Returns NA if not found in the valid appraisal list, forcing it to be dropped
                             if x_clean in appraisal_listing_ids_set:
                                 return f"Appr_{x_clean}"
-                                
-                            # If it does not exist, return the raw ID without the prefix
-                            return x_clean
+                            return pd.NA
                             
                         zenu_output[target_field] = base_df.get(s1_col, pd.Series(dtype=object)).apply(format_appr_owner_id)
                         continue
 
                     elif target_field == "contact_identifier":
-                        # Uses the pre-merged CONTACT_IDENTIFIER to guarantee we grab _c1 / _c2 splits correctly
                         zenu_output[target_field] = base_df.get('CONTACT_IDENTIFIER', pd.NA)
                         continue
                         
@@ -356,7 +386,6 @@ class MigrationEngine:
                 # --- OVERRIDE: PROSPECT OWNERS ---
                 elif group_name == "Prospect Owners":
                     if target_field == "property_identifier":
-                        # Uses property_id to link back to Prospects
                         s1_col = str(sources[0].get("field")).strip().lower() if sources else 'property_id'
                         zenu_output[target_field] = base_df.get(s1_col, pd.Series(dtype=object)).astype(str).str.replace(r'\.0$', '', regex=True).apply(
                             lambda x: f"Pr_{x}" if pd.notna(x) and x.strip() and x.lower() not in ['nan', 'none', 'null', ''] else pd.NA
@@ -369,6 +398,37 @@ class MigrationEngine:
                         
                     elif target_field == "contact_sale_type":
                         zenu_output[target_field] = rule.get("valueExpression", "Seller")
+                        continue
+
+                # --- OVERRIDE: LISTING VENDOR ---
+                elif group_name == "Listing Vendor":
+                    if target_field == "property_identifier":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'listing_id'
+                        def format_listing_vendor_id(x):
+                            if pd.isna(x): return pd.NA
+                            x_str = str(x).strip()
+                            if x_str.lower() in ['nan', 'none', 'null', '']: return pd.NA
+                            x_clean = re.sub(r'\.0$', '', x_str)
+                            # Deletes row if not found in Sale or Lease files
+                            if x_clean in sale_lease_listing_ids_set:
+                                return x_clean
+                            return pd.NA
+                        zenu_output[target_field] = base_df.get(s1_col, pd.Series(dtype=object)).apply(format_listing_vendor_id)
+                        continue
+
+                    elif target_field == "contact_identifier":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'contact_id'
+                        # Standard map isolated to _c and _c1 ONLY
+                        zenu_output[target_field] = base_df.get(s1_col, pd.Series(dtype=object)).map(contact_cleaned_mapping)
+                        continue
+                        
+                    elif target_field == "contact_sale_type":
+                        zenu_output[target_field] = rule.get("valueExpression", "Seller")
+                        continue
+                        
+                    elif target_field == "Vendor_solicitor":
+                        # Smart map to locate the matching solicitor for this exact property
+                        zenu_output[target_field] = base_df.get('listing_id', pd.Series(dtype=object)).map(vendor_solicitor_map).map(contact_cleaned_mapping)
                         continue
 
                 # --- OVERRIDE: PROSPECT ---
@@ -509,7 +569,6 @@ class MigrationEngine:
                             zenu_output[target_field] = pd.NA
                         continue
 
-                # --- OVERRIDE: APPRAISAL ---
                 elif group_name == "Appraisal":
                     if target_field == "property_identifier":
                         zenu_output[target_field] = base_df.get('listing_id', pd.Series(dtype=object)).apply(
@@ -646,7 +705,7 @@ class MigrationEngine:
                             zenu_output[target_field] = pd.NA
                         continue
 
-                # --- OVERRIDE: CONTACT_NOTES ---
+
                 elif group_name == "Contact_Notes":
                     if target_field == "contact_identifier":
                         zenu_output[target_field] = base_df.get('contact_id', pd.Series(dtype=object)).map(contact_cleaned_mapping)
@@ -678,7 +737,6 @@ class MigrationEngine:
                         zenu_output[target_field] = note_ids.map(build_mega_note)
                         continue
 
-                # --- OVERRIDE: CONTACT REQUIREMENTS ---
                 elif group_name == "Contact Requirements":
                     if target_field == "contact_identifier":
                         zenu_output[target_field] = base_df.get('CONTACT_IDENTIFIER', base_df.get('contact_id', pd.NA))
@@ -707,7 +765,6 @@ class MigrationEngine:
                             zenu_output[target_field] = (has_s1 | has_s2).map({True: 'SQM', False: pd.NA})
                         continue
 
-                # --- OVERRIDE: CONTACT RELATIONSHIP ---
                 elif group_name == "Contact Relationship":
                     if contact_cleaned_mapping is None:
                         try:
@@ -778,15 +835,12 @@ class MigrationEngine:
             # 5. GLOBAL CLEANUP AND EXPORT
             # ---------------------------------------------------------
             
-            # Inject note_id as the first column for Contact_Notes to help with verification
             if group_name == "Contact_Notes" and 'note_id' in base_df.columns:
                 zenu_output.insert(0, 'source_note_id', base_df['note_id'])
                 
-            # Inject original role into Owners to easily identify why they were included
-            if group_name in ["Prospect Owners", "Appraisal Owners"] and 'role' in base_df.columns:
+            if group_name in ["Prospect Owners", "Appraisal Owners", "Listing Vendor"] and 'role' in base_df.columns:
                 zenu_output['source_role'] = base_df['role'].astype(str).str.title()
 
-            # THE GLOBAL ZENU SCRUBBER
             def global_cleaner(val):
                 if pd.isna(val): 
                     return val
@@ -797,64 +851,58 @@ class MigrationEngine:
                 text = re.sub(r' +', ' ', text)
                 return text.strip()
 
-            # Apply the scrubber to every single column in the final export file
             for col in zenu_output.columns:
                 zenu_output[col] = zenu_output[col].apply(global_cleaner)
 
-            # Convert empty strings and 'nan' text back to true nulls so pandas can drop them
             zenu_output = zenu_output.replace('', pd.NA).replace('nan', pd.NA).replace('None', pd.NA)
 
-            # SPECIFIC DROPS
             if group_name == "Contact_Notes":
                 if 'contact_identifier' in zenu_output.columns:
                     zenu_output = zenu_output.dropna(subset=['contact_identifier'])
                 if 'contact_notes' in zenu_output.columns:
                     zenu_output = zenu_output.dropna(subset=['contact_notes'])
                     
-            if group_name in ["Appraisal", "Prospect"]:
+            if group_name in ["Appraisal", "Prospect", "Appraisal Owners", "Prospect Owners", "Listing Vendor"]:
                 if 'property_identifier' in zenu_output.columns:
                     zenu_output = zenu_output.dropna(subset=['property_identifier'])
                     
-            if group_name in ["Prospect Owners", "Appraisal Owners"]:
+            if group_name in ["Prospect Owners", "Appraisal Owners", "Listing Vendor"]:
                 if 'contact_identifier' in zenu_output.columns:
                     zenu_output = zenu_output.dropna(subset=['contact_identifier'])
 
-            # Save to CSV
             safe_group_name = group_name.replace(" ", "_").replace("/", "_")
             output_path = os.path.join(self.workspace, f"Zenu_{safe_group_name}_Final.csv")
             zenu_output.to_csv(output_path, index=False)
-            print(f"[{self.job_id}] SUCCESS: Created {output_path}")
+            self.log(f"[{self.job_id}] SUCCESS: Created {output_path}")
 
         # ==========================================
         # ROUTE 2: EAGLE DATABASE LOGIC (FUTURE)
         # ==========================================
         elif self.source_crm == "Eagle":
-            print(f"[{self.job_id}] Eagle Database logic not yet implemented for {group_name}.")
-            # Future Eagle code goes here
+            self.log(f"[{self.job_id}] Eagle Database logic not yet implemented for {group_name}.")
             pass
             
         # ==========================================
         # ROUTE 3: VAULTRE LOGIC (FUTURE)
         # ==========================================
         elif self.source_crm == "VaultRE":
-            print(f"[{self.job_id}] VaultRE logic not yet implemented for {group_name}.")
-            # Future VaultRE code goes here
+            self.log(f"[{self.job_id}] VaultRE logic not yet implemented for {group_name}.")
             pass
 
         # ==========================================
         # ROUTE 4: REX LOGIC (FUTURE)
         # ==========================================
         elif self.source_crm == "Rex":
-            print(f"[{self.job_id}] Rex logic not yet implemented for {group_name}.")
+            self.log(f"[{self.job_id}] Rex logic not yet implemented for {group_name}.")
             pass
             
         # ==========================================
         # ROUTE 5: ZENU OFFICE TRANSFER LOGIC (FUTURE)
         # ==========================================
         elif self.source_crm == "ZenuTransfer":
-            print(f"[{self.job_id}] Zenu Office Transfer logic not yet implemented for {group_name}.")
+            self.log(f"[{self.job_id}] Zenu Office Transfer logic not yet implemented for {group_name}.")
             pass
 
     def close(self):
         self.conn.close()
-        print(f"[{self.job_id}] Database connection closed.")
+        self.log(f"[{self.job_id}] Database connection closed.")
