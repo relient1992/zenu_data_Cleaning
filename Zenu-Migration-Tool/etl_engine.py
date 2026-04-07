@@ -139,15 +139,18 @@ class MigrationEngine:
                      self.log(f"[{self.job_id}] Error building split {group_name} base table: {e}")
                      return
                      
-            elif group_name == "Listing Vendor":
+            elif group_name in ["Listing Vendor", "Listing Buyer"]:
                 try:
-                    # Listing Vendor specifically avoids the split 1-to-Many merge, using standard isolated load
+                    # Listing Vendor/Buyer specifically avoids the split 1-to-Many merge, using standard isolated load
                     base_df = pd.read_sql_query(f'SELECT * FROM "{base_file}"', self.conn)
                     base_df.columns = base_df.columns.str.strip().str.lower()
                     
-                    # STRICT PRE-FILTER: Owners must only contain specific Seller roles
+                    # STRICT PRE-FILTER
                     if 'role' in base_df.columns:
-                        allowed_roles = ['owner', 'owner_occupier', 'landlord', 'owner_absentee', 'vendor', 'prospective_vendor']
+                        if group_name == "Listing Vendor":
+                            allowed_roles = ['owner', 'owner_occupier', 'landlord', 'owner_absentee', 'vendor', 'prospective_vendor']
+                        elif group_name == "Listing Buyer":
+                            allowed_roles = ['buyer', 'purchaser']
                         base_df = base_df[base_df['role'].astype(str).str.strip().str.lower().isin(allowed_roles)]
                 except Exception as e:
                      self.log(f"[{self.job_id}] Error building {group_name} base table: {e}")
@@ -172,8 +175,17 @@ class MigrationEngine:
             appraisal_listing_ids_set = set()
             sale_lease_listing_ids_set = set()
             vendor_solicitor_map = {}
+            buyer_solicitor_map = {}
+            listing_contract_date_map = {}
+            listing_sold_price_map = {}
+            listing_status_map = {}
+            
+            # Special Task Maps
+            task_to_contact_map = {}
+            task_to_listing_map = {}
+            task_to_agent_map = {}
 
-            if group_name in ["Contact_Notes", "Appraisal", "Prospect", "Prospect Owners", "Appraisal Owners", "Listing Vendor"]:
+            if group_name in ["Contact_Notes", "Appraisal", "Prospect", "Prospect Owners", "Appraisal Owners", "Listing Vendor", "Listing Buyer", "Enquiry", "Inspection", "Task"]:
                 try:
                     self.log(f"[{self.job_id}] Generating Dictionaries...")
                     clean_df = pd.read_sql_query('SELECT * FROM "contact_cleaned.csv"', self.conn)
@@ -222,12 +234,15 @@ class MigrationEngine:
                         note_to_listing = nx_listing.drop_duplicates(subset=['note_id']).set_index('note_id')['listing_id'].to_dict()
 
                     list_dfs = []
+                    status_dfs = []
                     for table in ["listing_sale.csv", "listing_lease.csv", "listing_appraisal.csv"]:
                         try: 
                             temp_df = pd.read_sql_query(f'SELECT * FROM "{table}"', self.conn)
                             temp_df.columns = temp_df.columns.str.strip().str.lower()
                             if 'listing_id' in temp_df.columns and 'property_id' in temp_df.columns:
                                 list_dfs.append(temp_df[['listing_id', 'property_id']])
+                            if 'listing_id' in temp_df.columns and 'status' in temp_df.columns:
+                                status_dfs.append(temp_df[['listing_id', 'status']])
                         except: pass
                     
                     all_listed_props = pd.DataFrame(columns=['property_id'])
@@ -237,6 +252,11 @@ class MigrationEngine:
                         all_listed_props = pd.concat(list_dfs).dropna(subset=['property_id'])
                     
                     listed_prop_ids_set = set(all_listed_props['property_id'].astype(str).str.replace(r'\.0$', '', regex=True).unique())
+
+                    if status_dfs:
+                        all_statuses = pd.concat(status_dfs).drop_duplicates(subset=['listing_id'])
+                        all_statuses['listing_id_clean'] = all_statuses['listing_id'].astype(str).str.replace(r'\.0$', '', regex=True)
+                        listing_status_map = all_statuses.set_index('listing_id_clean')['status'].to_dict()
 
                     prop_df = pd.read_sql_query('SELECT * FROM "property.csv"', self.conn)
                     prop_df.columns = prop_df.columns.str.strip().str.lower()
@@ -281,7 +301,7 @@ class MigrationEngine:
 
                 except Exception as e: self.log(f"[{self.job_id}] Warning: Error building Maps: {e}")
 
-            if group_name == "Appraisal Owners":
+            if group_name in ["Appraisal Owners", "Enquiry", "Inspection", "Task"]:
                 try:
                     appr_check_df = pd.read_sql_query('SELECT * FROM "listing_appraisal.csv"', self.conn)
                     appr_check_df.columns = appr_check_df.columns.str.strip().str.lower()
@@ -289,19 +309,34 @@ class MigrationEngine:
                         appraisal_listing_ids_set = set(appr_check_df['listing_id'].astype(str).str.replace(r'\.0$', '', regex=True).unique())
                 except Exception as e: self.log(f"[{self.job_id}] Warning: Error building Appraisal validation set: {e}")
 
-            if group_name == "Listing Vendor":
+            if group_name in ["Listing Vendor", "Listing Buyer"]:
                 try:
-                    sl_df = pd.read_sql_query('SELECT listing_id FROM "listing_sale.csv"', self.conn)
+                    sl_df = pd.read_sql_query('SELECT * FROM "listing_sale.csv"', self.conn)
+                    sl_df.columns = sl_df.columns.str.strip().str.lower()
                     ll_df = pd.read_sql_query('SELECT listing_id FROM "listing_lease.csv"', self.conn)
+                    
                     sl_ids = sl_df['listing_id'].astype(str).str.replace(r'\.0$', '', regex=True) if 'listing_id' in sl_df.columns else pd.Series(dtype=str)
                     ll_ids = ll_df['listing_id'].astype(str).str.replace(r'\.0$', '', regex=True) if 'listing_id' in ll_df.columns else pd.Series(dtype=str)
                     sale_lease_listing_ids_set = set(pd.concat([sl_ids, ll_ids]).unique())
                     
+                    # Maps specific to Listing Buyer
+                    if 'listing_id' in sl_df.columns:
+                        sl_df['listing_id_clean'] = sl_df['listing_id'].astype(str).str.replace(r'\.0$', '', regex=True)
+                        if 'contract_date' in sl_df.columns:
+                            listing_contract_date_map = sl_df.set_index('listing_id_clean')['contract_date'].to_dict()
+                        if 'sold_price' in sl_df.columns:
+                            listing_sold_price_map = sl_df.set_index('listing_id_clean')['sold_price'].to_dict()
+                    
                     lxc_df = pd.read_sql_query('SELECT listing_id, contact_id, role FROM "listing_x_contact.csv"', self.conn)
                     lxc_df.columns = lxc_df.columns.str.strip().str.lower()
-                    solicitors = lxc_df[lxc_df['role'].astype(str).str.strip().str.lower() == 'vendor_solicitor']
-                    vendor_solicitor_map = solicitors.set_index('listing_id')['contact_id'].to_dict()
-                except Exception as e: self.log(f"[{self.job_id}] Warning: Error building Listing Vendor validation sets: {e}")
+                    
+                    if group_name == "Listing Vendor":
+                        solicitors = lxc_df[lxc_df['role'].astype(str).str.strip().str.lower() == 'vendor_solicitor']
+                        vendor_solicitor_map = solicitors.set_index('listing_id')['contact_id'].to_dict()
+                    elif group_name == "Listing Buyer":
+                        solicitors = lxc_df[lxc_df['role'].astype(str).str.strip().str.lower() == 'buyer_solicitor']
+                        buyer_solicitor_map = solicitors.set_index('listing_id')['contact_id'].to_dict()
+                except Exception as e: self.log(f"[{self.job_id}] Warning: Error building {group_name} validation sets: {e}")
 
             if group_name == "Appraisal":
                 try:
@@ -347,6 +382,28 @@ class MigrationEngine:
                                 if name not in prospect_agents_map[pid]: prospect_agents_map[pid].append(name)
                 except Exception as e: self.log(f"[{self.job_id}] Warning: Error building Prospect maps: {e}")
 
+            if group_name == "Task":
+                try:
+                    self.log(f"[{self.job_id}] Generating Task Junction Maps...")
+                    txc = pd.read_sql_query('SELECT task_id, contact_id FROM "task_x_contact.csv"', self.conn)
+                    txc.columns = txc.columns.str.strip().str.lower()
+                    if 'task_id' in txc.columns and 'contact_id' in txc.columns:
+                        txc['task_id_clean'] = txc['task_id'].astype(str).str.replace(r'\.0$', '', regex=True)
+                        task_to_contact_map = txc.drop_duplicates('task_id_clean').set_index('task_id_clean')['contact_id'].to_dict()
+                    
+                    txl = pd.read_sql_query('SELECT task_id, listing_id FROM "task_x_listing.csv"', self.conn)
+                    txl.columns = txl.columns.str.strip().str.lower()
+                    if 'task_id' in txl.columns and 'listing_id' in txl.columns:
+                        txl['task_id_clean'] = txl['task_id'].astype(str).str.replace(r'\.0$', '', regex=True)
+                        task_to_listing_map = txl.drop_duplicates('task_id_clean').set_index('task_id_clean')['listing_id'].to_dict()
+                    
+                    txa = pd.read_sql_query('SELECT task_id, agent_id FROM "task_x_agent.csv"', self.conn)
+                    txa.columns = txa.columns.str.strip().str.lower()
+                    if 'task_id' in txa.columns and 'agent_id' in txa.columns:
+                        txa['task_id_clean'] = txa['task_id'].astype(str).str.replace(r'\.0$', '', regex=True)
+                        task_to_agent_map = txa.drop_duplicates('task_id_clean').set_index('task_id_clean')['agent_id'].to_dict()
+                except Exception as e:
+                    self.log(f"[{self.job_id}] Warning: Error building Task junction maps: {e}")
 
             # ---------------------------------------------------------
             # 4. PROCESS THE RULES LOOP
@@ -356,8 +413,341 @@ class MigrationEngine:
                 action = rule.get("action")
                 sources = rule.get("sources", [])
 
+                # --- OVERRIDE: TASK ---
+                if group_name == "Task":
+                    if target_field.lower() == "task_identifier":
+                        def format_task_id(x):
+                            if pd.isna(x): return pd.NA
+                            x_str = str(x).strip()
+                            if x_str.lower() in ['nan', 'none', 'null', '']: return pd.NA
+                            x_clean = re.sub(r'\.0$', '', x_str)
+                            return f"{x_clean}_T"
+                        # Force mapping from task_id directly regardless of JSON source setting
+                        zenu_output[target_field] = base_df.get('task_id', pd.Series(dtype=object)).apply(format_task_id)
+                        continue
+                        
+                    elif target_field.lower() == "contact_identifier":
+                        def get_task_contact(tid):
+                            if pd.isna(tid): return pd.NA
+                            tid_clean = re.sub(r'\.0$', '', str(tid).strip())
+                            cid = task_to_contact_map.get(tid_clean)
+                            return contact_cleaned_mapping.get(cid, pd.NA) if pd.notna(cid) else pd.NA
+                        # Force mapping from task_id to properly use junction map
+                        zenu_output[target_field] = base_df.get('task_id', pd.Series(dtype=object)).apply(get_task_contact)
+                        continue
+                        
+                    elif target_field.lower() == "property_identifier":
+                        def get_task_property(tid):
+                            if pd.isna(tid): return pd.NA
+                            tid_clean = re.sub(r'\.0$', '', str(tid).strip())
+                            lid = task_to_listing_map.get(tid_clean)
+                            if pd.isna(lid): return pd.NA
+                            lid_clean = re.sub(r'\.0$', '', str(lid).strip())
+                            if lid_clean in appraisal_listing_ids_set:
+                                return f"Appr_{lid_clean}"
+                            return lid_clean
+                        # Force mapping from task_id to properly use junction map
+                        zenu_output[target_field] = base_df.get('task_id', pd.Series(dtype=object)).apply(get_task_property)
+                        continue
+                        
+                    elif target_field in ["zenu_contact_id", "zenu_property_id"]:
+                        zenu_output[target_field] = pd.NA
+                        continue
+                        
+                    elif target_field in ["task_subject", "task_notes"]:
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else ('headline' if target_field == 'task_subject' else 'description')
+                        def decode_b64(text):
+                            try:
+                                if pd.isna(text) or str(text).lower() in ['nan', 'none', 'null', '']: return pd.NA
+                                s = str(text).strip()
+                                if s.startswith('[base64]'): 
+                                    s = s.replace('[base64]', '')
+                                    s += "=" * ((4 - len(s) % 4) % 4)
+                                    return base64.b64decode(s).decode('utf-8', errors='ignore')
+                                return s
+                            except: return str(text)
+                        if s1_col in base_df.columns:
+                            zenu_output[target_field] = base_df[s1_col].apply(decode_b64)
+                        else:
+                            zenu_output[target_field] = pd.NA
+                        continue
+                        
+                    elif target_field == "agentbox_status":
+                        def get_task_status(tid):
+                            if pd.isna(tid): return pd.NA
+                            tid_clean = re.sub(r'\.0$', '', str(tid).strip())
+                            lid = task_to_listing_map.get(tid_clean)
+                            if pd.isna(lid): return pd.NA
+                            lid_clean = re.sub(r'\.0$', '', str(lid).strip())
+                            val = listing_status_map.get(lid_clean, pd.NA)
+                            return str(val) if pd.notna(val) and str(val).lower() not in ['nan', 'none', 'null', ''] else pd.NA
+                        # Force mapping from task_id to properly use junction map
+                        zenu_output[target_field] = base_df.get('task_id', pd.Series(dtype=object)).apply(get_task_status)
+                        continue
+                        
+                    elif target_field == "task_status":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'completed'
+                        def parse_status(x):
+                            if pd.isna(x): return "Active"
+                            x_str = str(x).strip().lower()
+                            bad_dates = ['0', '0.0', '', 'none', 'nan', 'null', 'nat', '0000-00-00', '0000-00-00 00:00:00', '1970-01-01', '1970-01-01 00:00:00', '01/01/1970', '1/01/1970', '01-01-1970', '1-01-1970']
+                            if x_str in bad_dates:
+                                return "Active"
+                            return "Completed"
+                        if s1_col in base_df.columns:
+                            zenu_output[target_field] = base_df[s1_col].apply(parse_status)
+                        else:
+                            zenu_output[target_field] = "Active"
+                        continue
+                        
+                    elif target_field == "task_team_member_1":
+                        def get_task_agent(tid):
+                            if pd.isna(tid): return pd.NA
+                            tid_clean = re.sub(r'\.0$', '', str(tid).strip())
+                            aid = task_to_agent_map.get(tid_clean)
+                            return agent_mapping.get(aid, pd.NA) if pd.notna(aid) else pd.NA
+                        # Force mapping from task_id to properly use junction map
+                        zenu_output[target_field] = base_df.get('task_id', pd.Series(dtype=object)).apply(get_task_agent)
+                        continue
+                        
+                    elif target_field == "task_date_due":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'due_date'
+                        if s1_col and s1_col in base_df.columns:
+                            raw_dates = base_df[s1_col].astype(str).str.strip().str.lower()
+                            bad_dates = ['0', '0.0', '', 'none', 'nan', 'null', 'nat', '0000-00-00', '0000-00-00 00:00:00', '1970-01-01', '1970-01-01 00:00:00', '01/01/1970', '1/01/1970', '01-01-1970', '1-01-1970']
+                            raw_dates = raw_dates.replace(bad_dates, pd.NA)
+                            parsed_dates = pd.to_datetime(raw_dates, errors='coerce', dayfirst=True)
+                            zenu_output[target_field] = parsed_dates.dt.strftime('%d/%m/%Y').replace(['NaT', 'nan'], pd.NA)
+                        else:
+                            zenu_output[target_field] = pd.NA
+                        continue
+
+                # --- OVERRIDE: INSPECTION ---
+                elif group_name == "Inspection":
+                    if target_field.lower() == "inspection_identifier":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'inspection_id'
+                        def format_inspection_id(x):
+                            if pd.isna(x): return pd.NA
+                            x_str = str(x).strip()
+                            if x_str.lower() in ['nan', 'none', 'null', '']: return pd.NA
+                            x_clean = re.sub(r'\.0$', '', x_str)
+                            return f"{x_clean}_I"
+                        zenu_output[target_field] = base_df.get(s1_col, pd.Series(dtype=object)).apply(format_inspection_id)
+                        continue
+
+                    elif target_field.lower() == "inspection_team_member_1":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'agent_id'
+                        zenu_output[target_field] = base_df.get(s1_col, pd.Series(dtype=object)).map(agent_mapping)
+                        continue
+
+                    elif target_field == "agentbox_status":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'listing_id'
+                        def get_status(x):
+                            if pd.isna(x): return pd.NA
+                            x_clean = re.sub(r'\.0$', '', str(x).strip())
+                            val = listing_status_map.get(x_clean, pd.NA)
+                            return str(val) if pd.notna(val) and str(val).lower() not in ['nan', 'none', 'null', ''] else pd.NA
+                        zenu_output[target_field] = base_df.get(s1_col, pd.Series(dtype=object)).apply(get_status)
+                        continue
+
+                    elif target_field == "property_identifier":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'listing_id'
+                        def format_insp_prop_id(x):
+                            if pd.isna(x): return pd.NA
+                            x_str = str(x).strip()
+                            if x_str.lower() in ['nan', 'none', 'null', '']: return pd.NA
+                            x_clean = re.sub(r'\.0$', '', x_str)
+                            if x_clean in appraisal_listing_ids_set:
+                                return f"Appr_{x_clean}"
+                            return x_clean
+                        zenu_output[target_field] = base_df.get(s1_col, pd.Series(dtype=object)).apply(format_insp_prop_id)
+                        continue
+
+                    elif target_field == "contact_identifier":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'contact_id'
+                        zenu_output[target_field] = base_df.get(s1_col, pd.Series(dtype=object)).map(contact_cleaned_mapping)
+                        continue
+                        
+                    elif target_field in ["zenu_property_id", "zenu_contact_id"]:
+                        zenu_output[target_field] = pd.NA
+                        continue
+                        
+                    elif target_field in ["inspection_start_date", "inspection_end_date"]:
+                        date_col = str(sources[0].get("field")).strip().lower() if sources else 'date'
+                        time_col = 'start_time' if target_field == "inspection_start_date" else 'end_time'
+                        
+                        def build_datetime(row):
+                            d = str(row.get(date_col, '')).strip().replace('nan', '').replace('None', '')
+                            t = str(row.get(time_col, '')).strip().replace('nan', '').replace('None', '')
+                            if not d or d in ['0', '0.0', '0000-00-00', '1970-01-01', '01/01/1970']: return pd.NA
+                            dt_str = f"{d} {t}".strip()
+                            parsed = pd.to_datetime(dt_str, errors='coerce', dayfirst=True)
+                            if pd.isna(parsed) or parsed.year == 1970: return pd.NA
+                            # NEW: Output 12-hour AM/PM format
+                            return parsed.strftime('%d/%m/%Y %I:%M %p').strip()
+                            
+                        zenu_output[target_field] = base_df.apply(build_datetime, axis=1)
+                        continue
+                        
+                    elif target_field == "inspection_is_private":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'inspection_type'
+                        if s1_col in base_df.columns:
+                            zenu_output[target_field] = base_df[s1_col].astype(str).str.strip().str.upper().apply(
+                                lambda x: "FALSE" if x == "OFI" else "TRUE"
+                            )
+                        else:
+                            zenu_output[target_field] = "TRUE"
+                        continue
+                        
+                    elif target_field == "inspection_is_interested":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'interest_level'
+                        def map_interest(x):
+                            if pd.isna(x): return ""
+                            val = str(x).strip().lower()
+                            if val == "cold": return "NO"
+                            if val == "warm": return "Maybe"
+                            if val == "hot": return "Yes"
+                            return ""
+                        if s1_col in base_df.columns:
+                            zenu_output[target_field] = base_df[s1_col].apply(map_interest)
+                        else:
+                            zenu_output[target_field] = ""
+                        continue
+                        
+                    elif "note" in target_field.lower() or "comment" in target_field.lower():
+                        def decode_and_combine(row):
+                            parts = []
+                            for src in sources:
+                                col = str(src.get("field")).strip().lower()
+                                val = row.get(col)
+                                if pd.isna(val): continue
+                                s = str(val).strip()
+                                if s.lower() in ['nan', 'none', 'null', '']: continue
+                                
+                                if s.startswith('[base64]'):
+                                    s = s.replace('[base64]', '')
+                                    s += "=" * ((4 - len(s) % 4) % 4)
+                                    try:
+                                        s = base64.b64decode(s).decode('utf-8', errors='ignore')
+                                    except:
+                                        pass
+                                if s: parts.append(s)
+                            res = " - ".join(parts) if parts else ""
+                            if target_field == "inspection_notes" and not res:
+                                return "N/A"
+                            return res if res else pd.NA
+                            
+                        if sources:
+                            zenu_output[target_field] = base_df.apply(decode_and_combine, axis=1)
+                            if target_field == "inspection_notes":
+                                zenu_output[target_field] = zenu_output[target_field].fillna("N/A")
+                        else:
+                            zenu_output[target_field] = "N/A" if target_field == "inspection_notes" else pd.NA
+                        continue
+                        
+                    elif "date" in target_field.lower():
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else None
+                        if s1_col and s1_col in base_df.columns:
+                            raw_dates = base_df[s1_col].astype(str).str.strip().str.lower()
+                            bad_dates = ['0', '0.0', '', 'none', 'nan', 'null', 'nat', '0000-00-00', '0000-00-00 00:00:00', '1970-01-01', '1970-01-01 00:00:00', '01/01/1970', '1/01/1970', '01-01-1970', '1-01-1970']
+                            raw_dates = raw_dates.replace(bad_dates, pd.NA)
+                            parsed_dates = pd.to_datetime(raw_dates, errors='coerce', dayfirst=True)
+                            zenu_output[target_field] = parsed_dates.dt.strftime('%d/%m/%Y').replace(['NaT', 'nan'], pd.NA)
+                        else:
+                            zenu_output[target_field] = pd.NA
+                        continue
+
+
+                # --- OVERRIDE: ENQUIRY ---
+                elif group_name == "Enquiry":
+                    if target_field == "enquiry_identifier":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'enquiry_id'
+                        def format_enquiry_id(x):
+                            if pd.isna(x): return pd.NA
+                            x_str = str(x).strip()
+                            if x_str.lower() in ['nan', 'none', 'null', '']: return pd.NA
+                            x_clean = re.sub(r'\.0$', '', x_str)
+                            return f"{x_clean}_E"
+                        zenu_output[target_field] = base_df.get(s1_col, pd.Series(dtype=object)).apply(format_enquiry_id)
+                        continue
+
+                    elif target_field == "enquiry_team_member_1":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'agent_id'
+                        zenu_output[target_field] = base_df.get(s1_col, pd.Series(dtype=object)).map(agent_mapping)
+                        continue
+
+                    elif target_field == "agentbox_status":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'listing_id'
+                        def get_status(x):
+                            if pd.isna(x): return pd.NA
+                            x_clean = re.sub(r'\.0$', '', str(x).strip())
+                            val = listing_status_map.get(x_clean, pd.NA)
+                            return str(val) if pd.notna(val) and str(val).lower() not in ['nan', 'none', 'null', ''] else pd.NA
+                        zenu_output[target_field] = base_df.get(s1_col, pd.Series(dtype=object)).apply(get_status)
+                        continue
+
+                    elif target_field == "property_identifier":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'listing_id'
+                        def format_enquiry_prop_id(x):
+                            if pd.isna(x): return pd.NA
+                            x_str = str(x).strip()
+                            if x_str.lower() in ['nan', 'none', 'null', '']: return pd.NA
+                            x_clean = re.sub(r'\.0$', '', x_str)
+                            if x_clean in appraisal_listing_ids_set:
+                                return f"Appr_{x_clean}"
+                            return x_clean
+                        zenu_output[target_field] = base_df.get(s1_col, pd.Series(dtype=object)).apply(format_enquiry_prop_id)
+                        continue
+
+                    elif target_field == "contact_identifier":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'contact_id'
+                        zenu_output[target_field] = base_df.get(s1_col, pd.Series(dtype=object)).map(contact_cleaned_mapping)
+                        continue
+                        
+                    elif target_field in ["zenu_property_id", "zenu_contact_id"]:
+                        zenu_output[target_field] = pd.NA
+                        continue
+                        
+                    elif "note" in target_field.lower() or "comment" in target_field.lower():
+                        def decode_and_combine(row):
+                            parts = []
+                            for src in sources:
+                                col = str(src.get("field")).strip().lower()
+                                val = row.get(col)
+                                if pd.isna(val): continue
+                                s = str(val).strip()
+                                if s.lower() in ['nan', 'none', 'null', '']: continue
+                                
+                                if s.startswith('[base64]'):
+                                    s = s.replace('[base64]', '')
+                                    s += "=" * ((4 - len(s) % 4) % 4)
+                                    try:
+                                        s = base64.b64decode(s).decode('utf-8', errors='ignore')
+                                    except:
+                                        pass
+                                if s: parts.append(s)
+                            return " - ".join(parts) if parts else pd.NA
+                            
+                        if sources:
+                            zenu_output[target_field] = base_df.apply(decode_and_combine, axis=1)
+                        else:
+                            zenu_output[target_field] = pd.NA
+                        continue
+                        
+                    elif "date" in target_field.lower():
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else None
+                        if s1_col and s1_col in base_df.columns:
+                            raw_dates = base_df[s1_col].astype(str).str.strip().str.lower()
+                            bad_dates = ['0', '0.0', '', 'none', 'nan', 'null', 'nat', '0000-00-00', '0000-00-00 00:00:00', '1970-01-01', '1970-01-01 00:00:00', '01/01/1970', '1/01/1970', '01-01-1970', '1-01-1970']
+                            raw_dates = raw_dates.replace(bad_dates, pd.NA)
+                            parsed_dates = pd.to_datetime(raw_dates, errors='coerce', dayfirst=True)
+                            zenu_output[target_field] = parsed_dates.dt.strftime('%d/%m/%Y').replace(['NaT', 'nan'], pd.NA)
+                        else:
+                            zenu_output[target_field] = pd.NA
+                        continue
+
                 # --- OVERRIDE: APPRAISAL OWNERS ---
-                if group_name == "Appraisal Owners":
+                elif group_name == "Appraisal Owners":
                     if target_field == "property_identifier":
                         s1_col = str(sources[0].get("field")).strip().lower() if sources else 'listing_id'
                         
@@ -429,6 +819,69 @@ class MigrationEngine:
                     elif target_field == "Vendor_solicitor":
                         # Smart map to locate the matching solicitor for this exact property
                         zenu_output[target_field] = base_df.get('listing_id', pd.Series(dtype=object)).map(vendor_solicitor_map).map(contact_cleaned_mapping)
+                        continue
+
+                    # STRICT BLANKS for REA Matching downstream
+                    elif target_field in ["zenu_property_id", "zenu_contact_id"]:
+                        zenu_output[target_field] = pd.NA
+                        continue
+
+                # --- OVERRIDE: LISTING BUYER ---
+                elif group_name == "Listing Buyer":
+                    if target_field == "property_identifier":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'listing_id'
+                        def format_listing_buyer_id(x):
+                            if pd.isna(x): return pd.NA
+                            x_str = str(x).strip()
+                            if x_str.lower() in ['nan', 'none', 'null', '']: return pd.NA
+                            x_clean = re.sub(r'\.0$', '', x_str)
+                            # Deletes row if not found in Sale or Lease files
+                            if x_clean in sale_lease_listing_ids_set:
+                                return x_clean
+                            return pd.NA
+                        zenu_output[target_field] = base_df.get(s1_col, pd.Series(dtype=object)).apply(format_listing_buyer_id)
+                        continue
+
+                    elif target_field == "contact_identifier":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'contact_id'
+                        # Standard map isolated to _c and _c1 ONLY
+                        zenu_output[target_field] = base_df.get(s1_col, pd.Series(dtype=object)).map(contact_cleaned_mapping)
+                        continue
+                        
+                    elif target_field == "contact_sale_type":
+                        zenu_output[target_field] = rule.get("valueExpression", "Purchaser")
+                        continue
+                        
+                    elif target_field == "Buyer_solicitor":
+                        # Smart map to locate the matching solicitor for this exact property
+                        zenu_output[target_field] = base_df.get('listing_id', pd.Series(dtype=object)).map(buyer_solicitor_map).map(contact_cleaned_mapping)
+                        continue
+                        
+                    elif target_field == "property_contract_date":
+                        s1_col = 'listing_id'
+                        raw_dates = base_df.get(s1_col, pd.Series(dtype=object)).apply(
+                            lambda x: listing_contract_date_map.get(re.sub(r'\.0$', '', str(x).strip()), pd.NA) if pd.notna(x) else pd.NA
+                        )
+                        raw_dates = raw_dates.astype(str).str.strip().str.lower()
+                        bad_dates = ['0', '0.0', '', 'none', 'nan', 'null', 'nat', '0000-00-00', '0000-00-00 00:00:00', '1970-01-01', '1970-01-01 00:00:00', '01/01/1970', '1/01/1970', '01-01-1970', '1-01-1970']
+                        raw_dates = raw_dates.replace(bad_dates, pd.NA)
+                        parsed_dates = pd.to_datetime(raw_dates, errors='coerce', dayfirst=True)
+                        zenu_output[target_field] = parsed_dates.dt.strftime('%d/%m/%Y').replace(['NaT', 'nan'], pd.NA)
+                        continue
+
+                    elif target_field == "property_sold_price":
+                        s1_col = 'listing_id'
+                        def get_sold_price(x):
+                            if pd.isna(x): return pd.NA
+                            x_clean = re.sub(r'\.0$', '', str(x).strip())
+                            val = listing_sold_price_map.get(x_clean, pd.NA)
+                            return str(val).replace('.0', '') if pd.notna(val) else pd.NA
+                        zenu_output[target_field] = base_df.get(s1_col, pd.Series(dtype=object)).apply(get_sold_price).replace(['nan', 'None'], pd.NA)
+                        continue
+
+                    # STRICT BLANKS for REA Matching downstream
+                    elif target_field in ["zenu_property_id", "zenu_contact_id"]:
+                        zenu_output[target_field] = pd.NA
                         continue
 
                 # --- OVERRIDE: PROSPECT ---
@@ -629,9 +1082,13 @@ class MigrationEngine:
 
                     elif target_field == "property_street_name":
                         def build_st_name(row):
-                            parts = [str(row.get(c, '')).replace('nan','').replace('None','') for c in ['street_name', 'street_type']]
-                            res = " ".join([p.strip() for p in parts if p.strip() and p.lower() != 'none'])
+                            parts = [
+                                str(row.get(c, '')).replace('nan', '').replace('None', '')
+                                for c in ['street_name', 'street_type']
+                            ]
+                            res = " ".join([p.strip() for p in parts if p.strip()])
                             return res if res else pd.NA
+
                         zenu_output[target_field] = base_df.apply(build_st_name, axis=1)
                         continue
 
@@ -838,7 +1295,7 @@ class MigrationEngine:
             if group_name == "Contact_Notes" and 'note_id' in base_df.columns:
                 zenu_output.insert(0, 'source_note_id', base_df['note_id'])
                 
-            if group_name in ["Prospect Owners", "Appraisal Owners", "Listing Vendor"] and 'role' in base_df.columns:
+            if group_name in ["Prospect Owners", "Appraisal Owners", "Listing Vendor", "Listing Buyer"] and 'role' in base_df.columns:
                 zenu_output['source_role'] = base_df['role'].astype(str).str.title()
 
             def global_cleaner(val):
@@ -862,11 +1319,11 @@ class MigrationEngine:
                 if 'contact_notes' in zenu_output.columns:
                     zenu_output = zenu_output.dropna(subset=['contact_notes'])
                     
-            if group_name in ["Appraisal", "Prospect", "Appraisal Owners", "Prospect Owners", "Listing Vendor"]:
+            if group_name in ["Appraisal", "Prospect", "Appraisal Owners", "Prospect Owners", "Listing Vendor", "Listing Buyer", "Enquiry", "Inspection", "Task"]:
                 if 'property_identifier' in zenu_output.columns:
                     zenu_output = zenu_output.dropna(subset=['property_identifier'])
                     
-            if group_name in ["Prospect Owners", "Appraisal Owners", "Listing Vendor"]:
+            if group_name in ["Prospect Owners", "Appraisal Owners", "Listing Vendor", "Listing Buyer", "Enquiry", "Inspection"]:
                 if 'contact_identifier' in zenu_output.columns:
                     zenu_output = zenu_output.dropna(subset=['contact_identifier'])
 
