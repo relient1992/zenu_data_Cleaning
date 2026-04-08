@@ -92,8 +92,15 @@ class MigrationEngine:
             from collections import Counter
             base_file = Counter([f for f in source_files if f]).most_common(1)[0][0]
 
+            # FORCE SPINE FILES
             if group_name == "Contact_Notes":
                 base_file = "note_x_contact.csv"
+            elif group_name == "Task":
+                base_file = "task.csv"
+            elif group_name.lower() == "property_notes(notelisting)":
+                base_file = "note_x_listing.csv"
+            elif group_name.lower() == "property_notes(noteproperty)":
+                base_file = "note_x_property.csv"
 
             # ---------------------------------------------------------
             # 2. LOAD BASE DATA (WITH SPLIT-CONTACT MERGES)
@@ -167,7 +174,8 @@ class MigrationEngine:
             # ---------------------------------------------------------
             # 3. GLOBAL LOOKUP DICTIONARIES
             # ---------------------------------------------------------
-            contact_cleaned_mapping = None
+            contact_cleaned_mapping = {}
+            contact_cleaned_name_mapping = {}
             note_date_map, note_agent_map, note_cat_map, note_head_map, note_desc_map = {}, {}, {}, {}, {}
             agent_mapping, note_to_listing, listing_to_prop, prop_mapping = {}, {}, {}, {}
             appraisal_agents_map = {}
@@ -180,26 +188,49 @@ class MigrationEngine:
             listing_sold_price_map = {}
             listing_status_map = {}
             
-            # Special Task Maps
+            # Special Maps
             task_to_contact_map = {}
             task_to_listing_map = {}
             task_to_agent_map = {}
+            note_to_contact_map = {}
 
-            if group_name in ["Contact_Notes", "Appraisal", "Prospect", "Prospect Owners", "Appraisal Owners", "Listing Vendor", "Listing Buyer", "Enquiry", "Inspection", "Task"]:
+            if group_name.lower() in ["contact_notes", "appraisal", "prospect", "prospect owners", "appraisal owners", "listing vendor", "listing buyer", "enquiry", "inspection", "task", "property_notes(notelisting)", "property_notes(noteproperty)"]:
                 try:
                     self.log(f"[{self.job_id}] Generating Dictionaries...")
                     clean_df = pd.read_sql_query('SELECT * FROM "contact_cleaned.csv"', self.conn)
+                    clean_df.columns = clean_df.columns.str.strip()
+                    
+                    # Normalize raw identifier column name
                     match_col = 'Raw_ORIG_CONTACT_IDENTIFIER' if 'Raw_ORIG_CONTACT_IDENTIFIER' in clean_df.columns else 'Raw ORIG CONTACT_IDENTIFIER'
-                    clean_df['CONTACT_IDENTIFIER'] = clean_df['CONTACT_IDENTIFIER'].astype(str)
-                    primary_mask = clean_df['CONTACT_IDENTIFIER'].str.contains(r'_c1$|_c$', regex=True)
-                    clean_df = clean_df[primary_mask].drop_duplicates(subset=[match_col])
-                    contact_cleaned_mapping = clean_df.set_index(match_col)['CONTACT_IDENTIFIER'].to_dict()
+                    if match_col in clean_df.columns and 'CONTACT_IDENTIFIER' in clean_df.columns:
+                        clean_df['CONTACT_IDENTIFIER'] = clean_df['CONTACT_IDENTIFIER'].astype(str).str.strip()
+                        # STRCIT FLOAT REMOVAL FOR MAPPING KEYS
+                        clean_df[match_col] = clean_df[match_col].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                        
+                        primary_mask = clean_df['CONTACT_IDENTIFIER'].str.contains(r'_c1$|_c$', regex=True)
+                        primary_clean_df = clean_df[primary_mask].drop_duplicates(subset=[match_col])
+                        
+                        contact_cleaned_mapping = primary_clean_df.set_index(match_col)['CONTACT_IDENTIFIER'].to_dict()
+                        
+                        # --- BULLETPROOF CONTACT NAME LOOKUP ---
+                        name_col_match = None
+                        for col in primary_clean_df.columns:
+                            if col.strip().lower() in ['contact name', 'contact_name', 'name']:
+                                name_col_match = col
+                                break
+                                
+                        if name_col_match:
+                            contact_cleaned_name_mapping = primary_clean_df.set_index('CONTACT_IDENTIFIER')[name_col_match].astype(str).str.strip().to_dict()
+                        elif 'first_name' in primary_clean_df.columns and 'last_name' in primary_clean_df.columns:
+                            primary_clean_df['computed_name'] = primary_clean_df['first_name'].fillna('') + ' ' + primary_clean_df['last_name'].fillna('')
+                            contact_cleaned_name_mapping = primary_clean_df.set_index('CONTACT_IDENTIFIER')['computed_name'].str.strip().to_dict()
 
                     agent_df = pd.read_sql_query('SELECT * FROM "agent.csv"', self.conn)
                     agent_df.columns = agent_df.columns.str.strip().str.lower()
                     if 'agent_id' in agent_df.columns:
+                        agent_df['agent_id_clean'] = agent_df['agent_id'].astype(str).str.replace(r'\.0$', '', regex=True)
                         agent_df['full_name'] = agent_df.get('first_name', pd.Series(dtype=str)).fillna('') + ' ' + agent_df.get('last_name', pd.Series(dtype=str)).fillna('')
-                        agent_mapping = agent_df.set_index('agent_id')['full_name'].str.strip().to_dict()
+                        agent_mapping = agent_df.set_index('agent_id_clean')['full_name'].str.strip().to_dict()
 
                     note_df = pd.read_sql_query('SELECT * FROM "note.csv"', self.conn)
                     note_df.columns = note_df.columns.str.strip().str.lower()
@@ -213,25 +244,53 @@ class MigrationEngine:
                             return base64.b64decode(s).decode('utf-8', errors='ignore')
                         except: return str(text)
 
-                    if 'note_id' in note_df.columns:
-                        raw_ndates = note_df.get('date', pd.Series(dtype=object)).astype(str).str.strip().str.lower()
+                    def parse_strict_date(d):
+                        if pd.isna(d): return pd.NA
+                        d_str = str(d).strip().lower()
                         bad_dates = ['0', '0.0', '', 'none', 'nan', 'null', 'nat', '0000-00-00', '0000-00-00 00:00:00', '1970-01-01', '1970-01-01 00:00:00', '01/01/1970', '1/01/1970', '01-01-1970', '1-01-1970']
-                        raw_ndates = raw_ndates.replace(bad_dates, pd.NA)
-
-                        note_df['date_clean'] = pd.to_datetime(
-                            raw_ndates, errors='coerce', dayfirst=True
-                        ).dt.strftime('%d/%m/%Y').replace(['NaT', 'nan'], pd.NA)
+                        if d_str in bad_dates: return pd.NA
                         
-                        note_date_map = note_df.set_index('note_id')['date_clean'].dropna().to_dict()
-                        note_agent_map = note_df.set_index('note_id')['agent_id'].to_dict() if 'agent_id' in note_df.columns else {}
-                        note_cat_map = note_df.set_index('note_id')['category'].fillna('').to_dict() if 'category' in note_df.columns else {}
-                        note_head_map = note_df.set_index('note_id')['headline'].apply(decode_b64).to_dict() if 'headline' in note_df.columns else {}
-                        note_desc_map = note_df.set_index('note_id')['description'].apply(decode_b64).to_dict() if 'description' in note_df.columns else {}
+                        d_str_date = d_str.split()[0].replace('/', '-')
+                        formats_to_try = ['%d-%m-%Y', '%Y-%m-%d', '%d-%m-%y', '%Y-%m-%y']
+                        for fmt in formats_to_try:
+                            try:
+                                dt = pd.to_datetime(d_str_date, format=fmt)
+                                if dt.year == 1970: return pd.NA
+                                return dt.strftime('%d/%m/%Y')
+                            except ValueError:
+                                continue
+                        try:
+                            dt = pd.to_datetime(d_str, dayfirst=True, errors='coerce')
+                            if pd.isna(dt) or dt.year == 1970: return pd.NA
+                            return dt.strftime('%d/%m/%Y')
+                        except:
+                            return pd.NA
+
+                    if 'note_id' in note_df.columns:
+                        note_df['note_id_clean'] = note_df['note_id'].astype(str).str.replace(r'\.0$', '', regex=True)
+                        note_df['date_clean'] = note_df.get('date', pd.Series(dtype=object)).apply(parse_strict_date)
+                        
+                        note_date_map = note_df.set_index('note_id_clean')['date_clean'].dropna().to_dict()
+                        note_agent_map = note_df.set_index('note_id_clean')['agent_id'].astype(str).str.replace(r'\.0$', '', regex=True).to_dict() if 'agent_id' in note_df.columns else {}
+                        note_cat_map = note_df.set_index('note_id_clean')['category'].fillna('').to_dict() if 'category' in note_df.columns else {}
+                        note_head_map = note_df.set_index('note_id_clean')['headline'].apply(decode_b64).to_dict() if 'headline' in note_df.columns else {}
+                        note_desc_map = note_df.set_index('note_id_clean')['description'].apply(decode_b64).to_dict() if 'description' in note_df.columns else {}
 
                     nx_listing = pd.read_sql_query('SELECT * FROM "note_x_listing.csv"', self.conn)
                     nx_listing.columns = nx_listing.columns.str.strip().str.lower()
                     if 'note_id' in nx_listing.columns and 'listing_id' in nx_listing.columns:
-                        note_to_listing = nx_listing.drop_duplicates(subset=['note_id']).set_index('note_id')['listing_id'].to_dict()
+                        nx_listing['note_id_clean'] = nx_listing['note_id'].astype(str).str.replace(r'\.0$', '', regex=True)
+                        nx_listing['listing_id_clean'] = nx_listing['listing_id'].astype(str).str.replace(r'\.0$', '', regex=True)
+                        note_to_listing = nx_listing.drop_duplicates(subset=['note_id_clean']).set_index('note_id_clean')['listing_id_clean'].to_dict()
+
+                    try:
+                        nxc = pd.read_sql_query('SELECT note_id, contact_id FROM "note_x_contact.csv"', self.conn)
+                        nxc.columns = nxc.columns.str.strip().str.lower()
+                        if 'note_id' in nxc.columns and 'contact_id' in nxc.columns:
+                            nxc['note_id_clean'] = nxc['note_id'].astype(str).str.replace(r'\.0$', '', regex=True)
+                            nxc['contact_id_clean'] = nxc['contact_id'].astype(str).str.replace(r'\.0$', '', regex=True)
+                            note_to_contact_map = nxc.drop_duplicates('note_id_clean').set_index('note_id_clean')['contact_id_clean'].to_dict()
+                    except: pass
 
                     list_dfs = []
                     status_dfs = []
@@ -301,7 +360,7 @@ class MigrationEngine:
 
                 except Exception as e: self.log(f"[{self.job_id}] Warning: Error building Maps: {e}")
 
-            if group_name in ["Appraisal Owners", "Enquiry", "Inspection", "Task"]:
+            if group_name.lower() in ["appraisal owners", "enquiry", "inspection", "task", "property_notes(notelisting)", "property_notes(noteproperty)"]:
                 try:
                     appr_check_df = pd.read_sql_query('SELECT * FROM "listing_appraisal.csv"', self.conn)
                     appr_check_df.columns = appr_check_df.columns.str.strip().str.lower()
@@ -412,9 +471,116 @@ class MigrationEngine:
                 target_field = rule.get("targetField")
                 action = rule.get("action")
                 sources = rule.get("sources", [])
+                
+                # --- OVERRIDE: PROPERTY NOTES (LISTING) ---
+                if group_name.lower() == "property_notes(notelisting)":
+                    
+                    if target_field == "property_identifier":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'listing_id'
+                        def format_prop_note_id(x):
+                            if pd.isna(x): return pd.NA
+                            x_str = str(x).strip()
+                            if x_str.lower() in ['nan', 'none', 'null', '']: return pd.NA
+                            x_clean = re.sub(r'\.0$', '', x_str)
+                            if x_clean in appraisal_listing_ids_set:
+                                return f"Appr_{x_clean}"
+                            return x_clean
+                        
+                        col_to_use = s1_col if s1_col in base_df.columns else 'listing_id'
+                        if col_to_use in base_df.columns:
+                            zenu_output[target_field] = base_df[col_to_use].apply(format_prop_note_id)
+                        else:
+                            zenu_output[target_field] = pd.NA
+                        continue
+                        
+                    elif target_field in ["zenu_property_id", "zenu_contact_id"]:
+                        zenu_output[target_field] = pd.NA
+                        continue
+                        
+                    elif target_field == "property_note_created_date":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'note_id'
+                        col_to_use = s1_col if s1_col in base_df.columns else 'note_id'
+                        if col_to_use in base_df.columns:
+                            clean_nids = base_df[col_to_use].astype(str).str.replace(r'\.0$', '', regex=True)
+                            zenu_output[target_field] = clean_nids.map(note_date_map)
+                        else:
+                            zenu_output[target_field] = pd.NA
+                        continue
+                        
+                    elif target_field == "property_note_team_member":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'note_id'
+                        col_to_use = s1_col if s1_col in base_df.columns else 'note_id'
+                        if col_to_use in base_df.columns:
+                            clean_nids = base_df[col_to_use].astype(str).str.replace(r'\.0$', '', regex=True)
+                            zenu_output[target_field] = clean_nids.map(note_agent_map).map(agent_mapping)
+                        else:
+                            zenu_output[target_field] = pd.NA
+                        continue
+                        
+                    elif target_field == "agentbox_status":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'listing_id'
+                        def get_status(x):
+                            if pd.isna(x): return pd.NA
+                            x_clean = re.sub(r'\.0$', '', str(x).strip())
+                            val = listing_status_map.get(x_clean, pd.NA)
+                            return str(val) if pd.notna(val) and str(val).lower() not in ['nan', 'none', 'null', ''] else pd.NA
+                        col_to_use = s1_col if s1_col in base_df.columns else 'listing_id'
+                        if col_to_use in base_df.columns:
+                            zenu_output[target_field] = base_df[col_to_use].apply(get_status)
+                        else:
+                            zenu_output[target_field] = pd.NA
+                        continue
+                        
+                    elif target_field == "contact_identifier":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'note_id'
+                        def get_note_contact(nid):
+                            if pd.isna(nid) or str(nid).lower() == 'nan': return pd.NA
+                            nid_clean = re.sub(r'\.0$', '', str(nid).strip())
+                            raw_cid = note_to_contact_map.get(nid_clean)
+                            if pd.isna(raw_cid): return pd.NA
+                            return contact_cleaned_mapping.get(str(raw_cid), pd.NA)
+                            
+                        col_to_use = s1_col if s1_col in base_df.columns else 'note_id'
+                        if col_to_use in base_df.columns:
+                            zenu_output[target_field] = base_df[col_to_use].apply(get_note_contact)
+                        else:
+                            zenu_output[target_field] = pd.NA
+                        continue
+
+                    elif target_field == "property_notes":
+                        s1_col = str(sources[0].get("field")).strip().lower() if sources else 'note_id'
+                        col_to_use = s1_col if s1_col in base_df.columns else 'note_id'
+                        
+                        def build_prop_note(nid):
+                            if pd.isna(nid) or str(nid).lower() == 'nan': return pd.NA
+                            nid_clean = re.sub(r'\.0$', '', str(nid).strip())
+                            
+                            raw_cid = note_to_contact_map.get(nid_clean)
+                            mapped_cid = contact_cleaned_mapping.get(str(raw_cid)) if pd.notna(raw_cid) else None
+                            cname = contact_cleaned_name_mapping.get(mapped_cid) if mapped_cid else None
+                            
+                            cat = str(note_cat_map.get(nid_clean, '')).replace('nan', '').strip()
+                            head = str(note_head_map.get(nid_clean, '')).replace('nan', '').strip()
+                            desc = str(note_desc_map.get(nid_clean, '')).replace('nan', '').strip()
+                            
+                            parts = []
+                            if cname and str(cname).strip() and str(cname).strip().lower() not in ['nan', 'none']:
+                                parts.append(f"Regarding Contact: {str(cname).strip()}")
+                                
+                            if cat: parts.append(cat)
+                            if head: parts.append(head)
+                            if desc: parts.append(desc)
+                            
+                            return " - ".join(parts).strip(" - ") if parts else pd.NA
+
+                        if col_to_use in base_df.columns:
+                            zenu_output[target_field] = base_df[col_to_use].apply(build_prop_note)
+                        else:
+                            zenu_output[target_field] = pd.NA
+                        continue
 
                 # --- OVERRIDE: TASK ---
-                if group_name == "Task":
+                elif group_name == "Task":
                     if target_field.lower() == "task_identifier":
                         def format_task_id(x):
                             if pd.isna(x): return pd.NA
@@ -513,11 +679,37 @@ class MigrationEngine:
                     elif target_field == "task_date_due":
                         s1_col = str(sources[0].get("field")).strip().lower() if sources else 'due_date'
                         if s1_col and s1_col in base_df.columns:
-                            raw_dates = base_df[s1_col].astype(str).str.strip().str.lower()
-                            bad_dates = ['0', '0.0', '', 'none', 'nan', 'null', 'nat', '0000-00-00', '0000-00-00 00:00:00', '1970-01-01', '1970-01-01 00:00:00', '01/01/1970', '1/01/1970', '01-01-1970', '1-01-1970']
-                            raw_dates = raw_dates.replace(bad_dates, pd.NA)
-                            parsed_dates = pd.to_datetime(raw_dates, errors='coerce', dayfirst=True)
-                            zenu_output[target_field] = parsed_dates.dt.strftime('%d/%m/%Y').replace(['NaT', 'nan'], pd.NA)
+                            def parse_strict_date(d):
+                                if pd.isna(d): return pd.NA
+                                d_str = str(d).strip().lower()
+                                bad_dates = ['0', '0.0', '', 'none', 'nan', 'null', 'nat', '0000-00-00', '0000-00-00 00:00:00', '1970-01-01', '1970-01-01 00:00:00', '01/01/1970', '1/01/1970', '01-01-1970', '1-01-1970']
+                                if d_str in bad_dates: return pd.NA
+                                
+                                # Take just the date part and standardize separators to dash
+                                d_str_date = d_str.split()[0].replace('/', '-')
+                                
+                                # 1. Try strict standard formats to guarantee day/month order
+                                formats_to_try = [
+                                    '%d-%m-%Y', '%Y-%m-%d', '%d-%m-%y', '%Y-%m-%y'
+                                ]
+                                
+                                for fmt in formats_to_try:
+                                    try:
+                                        dt = pd.to_datetime(d_str_date, format=fmt)
+                                        if dt.year == 1970: return pd.NA
+                                        return dt.strftime('%d/%m/%Y')
+                                    except ValueError:
+                                        continue
+                                        
+                                # 2. Ultimate fallback if format is deeply weird
+                                try:
+                                    dt = pd.to_datetime(d_str, dayfirst=True, errors='coerce')
+                                    if pd.isna(dt) or dt.year == 1970: return pd.NA
+                                    return dt.strftime('%d/%m/%Y')
+                                except:
+                                    return pd.NA
+
+                            zenu_output[target_field] = base_df[s1_col].apply(parse_strict_date)
                         else:
                             zenu_output[target_field] = pd.NA
                         continue
@@ -583,7 +775,6 @@ class MigrationEngine:
                             dt_str = f"{d} {t}".strip()
                             parsed = pd.to_datetime(dt_str, errors='coerce', dayfirst=True)
                             if pd.isna(parsed) or parsed.year == 1970: return pd.NA
-                            # NEW: Output 12-hour AM/PM format
                             return parsed.strftime('%d/%m/%Y %I:%M %p').strip()
                             
                         zenu_output[target_field] = base_df.apply(build_datetime, axis=1)
@@ -648,11 +839,30 @@ class MigrationEngine:
                     elif "date" in target_field.lower():
                         s1_col = str(sources[0].get("field")).strip().lower() if sources else None
                         if s1_col and s1_col in base_df.columns:
-                            raw_dates = base_df[s1_col].astype(str).str.strip().str.lower()
-                            bad_dates = ['0', '0.0', '', 'none', 'nan', 'null', 'nat', '0000-00-00', '0000-00-00 00:00:00', '1970-01-01', '1970-01-01 00:00:00', '01/01/1970', '1/01/1970', '01-01-1970', '1-01-1970']
-                            raw_dates = raw_dates.replace(bad_dates, pd.NA)
-                            parsed_dates = pd.to_datetime(raw_dates, errors='coerce', dayfirst=True)
-                            zenu_output[target_field] = parsed_dates.dt.strftime('%d/%m/%Y').replace(['NaT', 'nan'], pd.NA)
+                            def parse_strict_date(d):
+                                if pd.isna(d): return pd.NA
+                                d_str = str(d).strip().lower()
+                                bad_dates = ['0', '0.0', '', 'none', 'nan', 'null', 'nat', '0000-00-00', '0000-00-00 00:00:00', '1970-01-01', '1970-01-01 00:00:00', '01/01/1970', '1/01/1970', '01-01-1970', '1-01-1970']
+                                if d_str in bad_dates: return pd.NA
+                                
+                                d_str_date = d_str.split()[0].replace('/', '-')
+                                
+                                formats_to_try = ['%d-%m-%Y', '%Y-%m-%d', '%d-%m-%y', '%Y-%m-%y']
+                                for fmt in formats_to_try:
+                                    try:
+                                        dt = pd.to_datetime(d_str_date, format=fmt)
+                                        if dt.year == 1970: return pd.NA
+                                        return dt.strftime('%d/%m/%Y')
+                                    except ValueError:
+                                        continue
+                                        
+                                try:
+                                    dt = pd.to_datetime(d_str, dayfirst=True, errors='coerce')
+                                    if pd.isna(dt) or dt.year == 1970: return pd.NA
+                                    return dt.strftime('%d/%m/%Y')
+                                except:
+                                    return pd.NA
+                            zenu_output[target_field] = base_df[s1_col].apply(parse_strict_date)
                         else:
                             zenu_output[target_field] = pd.NA
                         continue
@@ -737,11 +947,30 @@ class MigrationEngine:
                     elif "date" in target_field.lower():
                         s1_col = str(sources[0].get("field")).strip().lower() if sources else None
                         if s1_col and s1_col in base_df.columns:
-                            raw_dates = base_df[s1_col].astype(str).str.strip().str.lower()
-                            bad_dates = ['0', '0.0', '', 'none', 'nan', 'null', 'nat', '0000-00-00', '0000-00-00 00:00:00', '1970-01-01', '1970-01-01 00:00:00', '01/01/1970', '1/01/1970', '01-01-1970', '1-01-1970']
-                            raw_dates = raw_dates.replace(bad_dates, pd.NA)
-                            parsed_dates = pd.to_datetime(raw_dates, errors='coerce', dayfirst=True)
-                            zenu_output[target_field] = parsed_dates.dt.strftime('%d/%m/%Y').replace(['NaT', 'nan'], pd.NA)
+                            def parse_strict_date(d):
+                                if pd.isna(d): return pd.NA
+                                d_str = str(d).strip().lower()
+                                bad_dates = ['0', '0.0', '', 'none', 'nan', 'null', 'nat', '0000-00-00', '0000-00-00 00:00:00', '1970-01-01', '1970-01-01 00:00:00', '01/01/1970', '1/01/1970', '01-01-1970', '1-01-1970']
+                                if d_str in bad_dates: return pd.NA
+                                
+                                d_str_date = d_str.split()[0].replace('/', '-')
+                                
+                                formats_to_try = ['%d-%m-%Y', '%Y-%m-%d', '%d-%m-%y', '%Y-%m-%y']
+                                for fmt in formats_to_try:
+                                    try:
+                                        dt = pd.to_datetime(d_str_date, format=fmt)
+                                        if dt.year == 1970: return pd.NA
+                                        return dt.strftime('%d/%m/%Y')
+                                    except ValueError:
+                                        continue
+                                        
+                                try:
+                                    dt = pd.to_datetime(d_str, dayfirst=True, errors='coerce')
+                                    if pd.isna(dt) or dt.year == 1970: return pd.NA
+                                    return dt.strftime('%d/%m/%Y')
+                                except:
+                                    return pd.NA
+                            zenu_output[target_field] = base_df[s1_col].apply(parse_strict_date)
                         else:
                             zenu_output[target_field] = pd.NA
                         continue
@@ -899,13 +1128,30 @@ class MigrationEngine:
                     elif target_field in ["property_modified_date", "property_last_sold_date"]:
                         s1_col = str(sources[0].get("field")).strip().lower() if sources else None
                         if s1_col and s1_col in base_df.columns:
-                            raw_dates = base_df[s1_col].astype(str).str.strip().str.lower()
-                            bad_dates = ['0', '0.0', '', 'none', 'nan', 'null', 'nat', '0000-00-00', '0000-00-00 00:00:00', '1970-01-01', '1970-01-01 00:00:00', '01/01/1970', '1/01/1970', '01-01-1970', '1-01-1970']
-                            raw_dates = raw_dates.replace(bad_dates, pd.NA)
-                            
-                            parsed_dates = pd.to_datetime(raw_dates, errors='coerce', dayfirst=True)
-                            formatted_dates = parsed_dates.dt.strftime('%d/%m/%Y')
-                            zenu_output[target_field] = formatted_dates.replace(['NaT', 'nan'], pd.NA)
+                            def parse_strict_date(d):
+                                if pd.isna(d): return pd.NA
+                                d_str = str(d).strip().lower()
+                                bad_dates = ['0', '0.0', '', 'none', 'nan', 'null', 'nat', '0000-00-00', '0000-00-00 00:00:00', '1970-01-01', '1970-01-01 00:00:00', '01/01/1970', '1/01/1970', '01-01-1970', '1-01-1970']
+                                if d_str in bad_dates: return pd.NA
+                                
+                                d_str_date = d_str.split()[0].replace('/', '-')
+                                
+                                formats_to_try = ['%d-%m-%Y', '%Y-%m-%d', '%d-%m-%y', '%Y-%m-%y']
+                                for fmt in formats_to_try:
+                                    try:
+                                        dt = pd.to_datetime(d_str_date, format=fmt)
+                                        if dt.year == 1970: return pd.NA
+                                        return dt.strftime('%d/%m/%Y')
+                                    except ValueError:
+                                        continue
+                                        
+                                try:
+                                    dt = pd.to_datetime(d_str, dayfirst=True, errors='coerce')
+                                    if pd.isna(dt) or dt.year == 1970: return pd.NA
+                                    return dt.strftime('%d/%m/%Y')
+                                except:
+                                    return pd.NA
+                            zenu_output[target_field] = base_df[s1_col].apply(parse_strict_date)
                         else:
                             zenu_output[target_field] = pd.NA
                         continue
@@ -1035,14 +1281,30 @@ class MigrationEngine:
                             s1_col = str(rule["lookupConfig"][0]["extractFields"][0]).strip().lower()
                         
                         if s1_col and s1_col in base_df.columns:
-                            raw_dates = base_df[s1_col].astype(str).str.strip().str.lower()
-                            bad_dates = ['0', '0.0', '', 'none', 'nan', 'null', 'nat', '0000-00-00', '0000-00-00 00:00:00', '1970-01-01', '1970-01-01 00:00:00', '01/01/1970', '1/01/1970', '01-01-1970', '1-01-1970']
-                            raw_dates = raw_dates.replace(bad_dates, pd.NA)
-                            
-                            parsed_dates = pd.to_datetime(raw_dates, errors='coerce', dayfirst=True)
-                            formatted_dates = parsed_dates.dt.strftime('%d/%m/%Y')
-                            
-                            zenu_output[target_field] = formatted_dates.replace(['NaT', 'nan'], pd.NA)
+                            def parse_strict_date(d):
+                                if pd.isna(d): return pd.NA
+                                d_str = str(d).strip().lower()
+                                bad_dates = ['0', '0.0', '', 'none', 'nan', 'null', 'nat', '0000-00-00', '0000-00-00 00:00:00', '1970-01-01', '1970-01-01 00:00:00', '01/01/1970', '1/01/1970', '01-01-1970', '1-01-1970']
+                                if d_str in bad_dates: return pd.NA
+                                
+                                d_str_date = d_str.split()[0].replace('/', '-')
+                                
+                                formats_to_try = ['%d-%m-%Y', '%Y-%m-%d', '%d-%m-%y', '%Y-%m-%y']
+                                for fmt in formats_to_try:
+                                    try:
+                                        dt = pd.to_datetime(d_str_date, format=fmt)
+                                        if dt.year == 1970: return pd.NA
+                                        return dt.strftime('%d/%m/%Y')
+                                    except ValueError:
+                                        continue
+                                        
+                                try:
+                                    dt = pd.to_datetime(d_str, dayfirst=True, errors='coerce')
+                                    if pd.isna(dt) or dt.year == 1970: return pd.NA
+                                    return dt.strftime('%d/%m/%Y')
+                                except:
+                                    return pd.NA
+                            zenu_output[target_field] = base_df[s1_col].apply(parse_strict_date)
                         else:
                             zenu_output[target_field] = pd.NA
                         continue
@@ -1292,11 +1554,33 @@ class MigrationEngine:
             # 5. GLOBAL CLEANUP AND EXPORT
             # ---------------------------------------------------------
             
+            if group_name.lower() in ["property_notes(notelisting)", "property_notes(noteproperty)"]:
+                clean_nids = base_df.get('note_id', pd.Series(dtype=object)).astype(str).str.replace(r'\.0$', '', regex=True)
+                
+                def force_get_contact_id(nid):
+                    if pd.isna(nid) or str(nid).lower() == 'nan': return pd.NA
+                    nid_clean = re.sub(r'\.0$', '', str(nid).strip())
+                    raw_cid = note_to_contact_map.get(nid_clean)
+                    if pd.isna(raw_cid): return pd.NA
+                    return contact_cleaned_mapping.get(str(raw_cid), pd.NA)
+                    
+                def force_get_contact_name(cid):
+                    if pd.isna(cid) or str(cid).lower() == 'nan': return pd.NA
+                    return contact_cleaned_name_mapping.get(str(cid), pd.NA)
+                    
+                if 'note_id' not in zenu_output.columns:
+                    zenu_output.insert(0, 'note_id', base_df.get('note_id', pd.NA))
+                    
+                zenu_output['contact_identifier'] = clean_nids.apply(force_get_contact_id)
+                zenu_output['contact_name'] = zenu_output['contact_identifier'].apply(force_get_contact_name)
+
             if group_name == "Contact_Notes" and 'note_id' in base_df.columns:
-                zenu_output.insert(0, 'source_note_id', base_df['note_id'])
+                if 'source_note_id' not in zenu_output.columns:
+                    zenu_output.insert(0, 'source_note_id', base_df['note_id'])
                 
             if group_name in ["Prospect Owners", "Appraisal Owners", "Listing Vendor", "Listing Buyer"] and 'role' in base_df.columns:
-                zenu_output['source_role'] = base_df['role'].astype(str).str.title()
+                if 'source_role' not in zenu_output.columns:
+                    zenu_output['source_role'] = base_df['role'].astype(str).str.title()
 
             def global_cleaner(val):
                 if pd.isna(val): 
@@ -1319,11 +1603,18 @@ class MigrationEngine:
                 if 'contact_notes' in zenu_output.columns:
                     zenu_output = zenu_output.dropna(subset=['contact_notes'])
                     
-            if group_name in ["Appraisal", "Prospect", "Appraisal Owners", "Prospect Owners", "Listing Vendor", "Listing Buyer", "Enquiry", "Inspection", "Task"]:
+            if group_name.lower() in ["appraisal", "prospect", "appraisal owners", "prospect owners", "listing vendor", "listing buyer", "enquiry", "inspection", "task"]:
                 if 'property_identifier' in zenu_output.columns:
                     zenu_output = zenu_output.dropna(subset=['property_identifier'])
                     
-            if group_name in ["Prospect Owners", "Appraisal Owners", "Listing Vendor", "Listing Buyer", "Enquiry", "Inspection"]:
+            if group_name.lower() in ["property_notes(notelisting)", "property_notes(noteproperty)"]:
+                if 'property_identifier' in zenu_output.columns:
+                    zenu_output = zenu_output.dropna(subset=['property_identifier'])
+                note_col = next((c for c in zenu_output.columns if 'note' in c.lower() and 'date' not in c.lower() and 'team' not in c.lower()), None)
+                if note_col:
+                    zenu_output = zenu_output.dropna(subset=[note_col])
+                    
+            if group_name.lower() in ["prospect owners", "appraisal owners", "listing vendor", "listing buyer", "enquiry", "inspection"]:
                 if 'contact_identifier' in zenu_output.columns:
                     zenu_output = zenu_output.dropna(subset=['contact_identifier'])
 
