@@ -3,12 +3,14 @@ import pandas as pd
 import json
 import os
 
+# Import our dedicated CRM processors
+from crm_agentbox import AgentboxProcessor
+
 class MigrationEngine:
-    def __init__(self, job_id, workspace, source_crm="Agentbox", chunk_size=200000):
+    def __init__(self, job_id, workspace, source_crm="Agentbox"):
         self.job_id = job_id
         self.workspace = workspace
         self.source_crm = source_crm  
-        self.chunk_size = chunk_size # Limit rows per Excel file
         self.db_path = os.path.join(self.workspace, f"{job_id}_raw_data.db")
         self.log_path = os.path.join(self.workspace, "process.log")
         self.conn = sqlite3.connect(self.db_path)
@@ -19,35 +21,7 @@ class MigrationEngine:
         with open(self.log_path, "a", encoding="utf-8") as f:
             f.write(message + "\n")
             f.flush()
-            
-    def check_missing_files(self, rules):
-        """Scans the JSON mapping and checks if required files are missing from the folder."""
-        required_files = set()
         
-        # Scrape all files mentioned in the JSON
-        for group_name, group_rules in rules.items():
-            if not group_rules: continue
-            for rule in group_rules:
-                for source in rule.get("sources", []):
-                    if "file" in source:
-                        required_files.add(source["file"])
-                for lookup in rule.get("lookupConfig", []):
-                    if "targetFile" in lookup:
-                        required_files.add(lookup["targetFile"])
-                        
-        # Check against the actual folder
-        available_files = set(os.listdir(self.workspace))
-        missing_files = required_files - available_files
-        
-        if missing_files:
-            self.log(f"\n[{self.job_id}] ⚠️ WARNING: MISSING REQUIRED FILES!")
-            self.log(f"[{self.job_id}] The following files are required by the JSON but missing in the folder:")
-            for mf in missing_files:
-                self.log(f"   ❌ {mf}")
-            self.log(f"[{self.job_id}] The engine will attempt to continue, but related mappings will output blank values.\n")
-        else:
-            self.log(f"[{self.job_id}] ✅ All required mapping files are present.")
-
     def load_csvs_to_sqlite(self):
         self.log(f"[{self.job_id}] Building SQLite Database for {self.source_crm}...")
         for file in os.listdir(self.workspace):
@@ -55,6 +29,7 @@ class MigrationEngine:
                 table_name = file
                 file_path = os.path.join(self.workspace, file)
                 chunksize = 50000 
+                
                 encodings = ['utf-8-sig', 'cp1252', 'latin1']
                 loaded = False
                 
@@ -72,7 +47,9 @@ class MigrationEngine:
                         loaded = True
                     except Exception as e:
                         error_msg = str(e).lower()
-                        if "codec can't decode" not in error_msg and "utf-8" not in error_msg and "encoding" not in error_msg:
+                        if "codec can't decode" in error_msg or "utf-8" in error_msg or "encoding" in error_msg:
+                            self.log(f"[{self.job_id}] '{enc}' encoding failed for {file}. Trying next...")
+                        else:
                             self.log(f"[{self.job_id}] Warning: Could not load {file} - {e}")
                             break
                             
@@ -93,63 +70,30 @@ class MigrationEngine:
         with open(mapping_json_path, 'r') as f:
             rules = json.load(f)
             
-        # 1. Trigger Missing File Prompt
-        self.check_missing_files(rules)
-            
-        # 2. Dynamic CRM Routing
+        # ---------------------------------------------------------
+        # THE ROUTER: Select the correct CRM logic file
+        # ---------------------------------------------------------
         processor = None
         if self.source_crm == "Agentbox":
-            try:
-                from crm_agentbox import AgentboxProcessor
-                processor = AgentboxProcessor(self)
-            except ImportError:
-                self.log(f"[{self.job_id}] CRITICAL: crm_agentbox.py not found in directory!")
-                return
+            processor = AgentboxProcessor(self)
         elif self.source_crm == "Eagle":
-            self.log(f"[{self.job_id}] Eagle logic not yet implemented. Create crm_eagle.py")
+            self.log(f"[{self.job_id}] Eagle logic not yet implemented.")
             return
         elif self.source_crm == "VaultRE":
-            self.log(f"[{self.job_id}] VaultRE logic not yet implemented. Create crm_vaultre.py")
+            self.log(f"[{self.job_id}] VaultRE logic not yet implemented.")
+            return
+        elif self.source_crm == "Rex":
+            self.log(f"[{self.job_id}] Rex logic not yet implemented.")
             return
         else:
-            self.log(f"[{self.job_id}] Unknown CRM System: {self.source_crm}")
+            self.log(f"[{self.job_id}] Unknown CRM: {self.source_crm}")
             return
             
-        # 3. Process Groups and Export
+        # Loop through the JSON and send data to the chosen processor
         for group_name, group_rules in rules.items():
             if not group_rules: continue
             self.log(f"[{self.job_id}] Processing Group: {group_name} using {self.source_crm} logic")
-            
-            # Delegate heavy lifting to the specific CRM processor
-            zenu_output = processor.process_group(group_name, group_rules)
-            
-            # Export and split files if needed
-            if zenu_output is not None and not zenu_output.empty:
-                self.export_data(group_name, zenu_output)
-                
-    def export_data(self, group_name, df):
-        """Handles splitting massive files into safe 200k chunks for Excel."""
-        safe_group_name = group_name.replace(" ", "_").replace("/", "_")
-        total_rows = len(df)
-        
-        if self.chunk_size and total_rows > self.chunk_size:
-            self.log(f"[{self.job_id}] ⚠️ Data size ({total_rows} rows) exceeds {self.chunk_size} limit. Splitting into chunks...")
-            
-            num_chunks = (total_rows // self.chunk_size) + 1
-            for i in range(num_chunks):
-                start_idx = i * self.chunk_size
-                end_idx = start_idx + self.chunk_size
-                chunk_df = df.iloc[start_idx:end_idx]
-                
-                if not chunk_df.empty:
-                    output_path = os.path.join(self.workspace, f"Zenu_{safe_group_name}_Final_pt{i+1}.csv")
-                    chunk_df.to_csv(output_path, index=False)
-                    self.log(f"[{self.job_id}] SUCCESS: Created {output_path} ({len(chunk_df)} rows)")
-        else:
-            # Normal Export
-            output_path = os.path.join(self.workspace, f"Zenu_{safe_group_name}_Final.csv")
-            df.to_csv(output_path, index=False)
-            self.log(f"[{self.job_id}] SUCCESS: Created {output_path} ({total_rows} rows)")
+            processor.process_group(group_name, group_rules)
 
     def close(self):
         self.conn.close()
