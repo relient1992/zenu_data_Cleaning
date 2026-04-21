@@ -7,10 +7,11 @@ import os
 from crm_agentbox import AgentboxProcessor
 
 class MigrationEngine:
-    def __init__(self, job_id, workspace, source_crm="Agentbox"):
+    def __init__(self, job_id, workspace, source_crm="Agentbox", chunk_size=500000):
         self.job_id = job_id
         self.workspace = workspace
-        self.source_crm = source_crm  
+        self.source_crm = source_crm
+        self.chunk_size = chunk_size
         self.db_path = os.path.join(self.workspace, f"{job_id}_raw_data.db")
         self.log_path = os.path.join(self.workspace, "process.log")
         self.conn = sqlite3.connect(self.db_path)

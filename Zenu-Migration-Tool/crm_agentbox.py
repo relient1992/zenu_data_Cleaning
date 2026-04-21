@@ -1539,6 +1539,28 @@ class AgentboxProcessor:
                 zenu_output = zenu_output.dropna(subset=['contact_identifier'])
 
         safe_group_name = group_name.replace(" ", "_").replace("/", "_")
-        output_path = os.path.join(self.workspace, f"Zenu_{safe_group_name}_Final.csv")
-        zenu_output.to_csv(output_path, index=False)
-        self.log(f"[{self.job_id}] SUCCESS: Created {output_path}")
+        
+        chunk_limit = self.engine.chunk_size
+        total_rows = len(zenu_output)
+        
+        if chunk_limit > 0 and total_rows > chunk_limit:
+            self.log(f"[{self.job_id}] Result size ({total_rows}) exceeds limit. Splitting into chunks of {chunk_limit}...")
+            
+            # Calculate how many files we need
+            num_chunks = (total_rows // chunk_limit) + (1 if total_rows % chunk_limit != 0 else 0)
+            
+            for i in range(num_chunks):
+                start_idx = i * chunk_limit
+                end_idx = start_idx + chunk_limit
+                chunk_df = zenu_output.iloc[start_idx:end_idx]
+                
+                if not chunk_df.empty:
+                    # Append _pt1, _pt2, etc. to the filename
+                    output_path = os.path.join(self.workspace, f"Zenu_{safe_group_name}_Final_pt{i+1}.csv")
+                    chunk_df.to_csv(output_path, index=False)
+                    self.log(f"[{self.job_id}] SUCCESS: Created {output_path} ({len(chunk_df)} rows)")
+        else:
+            # If under the limit, just export normally
+            output_path = os.path.join(self.workspace, f"Zenu_{safe_group_name}_Final.csv")
+            zenu_output.to_csv(output_path, index=False)
+            self.log(f"[{self.job_id}] SUCCESS: Created {output_path}")
