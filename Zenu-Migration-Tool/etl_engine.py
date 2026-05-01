@@ -5,6 +5,7 @@ import os
 
 # Import our dedicated CRM processors
 from crm_agentbox import AgentboxProcessor
+from crm_eagle import EagleProcessor
 
 class MigrationEngine:
     def __init__(self, job_id, workspace, source_crm="Agentbox", chunk_size=500000):
@@ -78,8 +79,7 @@ class MigrationEngine:
         if self.source_crm == "Agentbox":
             processor = AgentboxProcessor(self)
         elif self.source_crm == "Eagle":
-            self.log(f"[{self.job_id}] Eagle logic not yet implemented.")
-            return
+            processor = EagleProcessor(self)
         elif self.source_crm == "VaultRE":
             self.log(f"[{self.job_id}] VaultRE logic not yet implemented.")
             return
