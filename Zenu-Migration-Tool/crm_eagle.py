@@ -2,6 +2,7 @@ import pandas as pd
 import sqlite3
 import os
 import numpy as np
+import re
 
 class EagleProcessor:
     def __init__(self, engine):
@@ -21,6 +22,18 @@ class EagleProcessor:
             self.process_appraisal(rules)
         elif group_lower == "prospect owners":
             self.process_prospect_owners(rules)
+        elif group_lower == "appraisal owners":
+            self.process_appraisal_owners(rules)
+        elif group_lower == "buyer":
+            self.process_buyer(rules)
+        elif group_lower == "vendor":
+            self.process_vendor(rules)
+        elif group_lower == "enquiries":
+            self.process_enquiries(rules)
+        elif group_lower in ["contact_notes", "contact notes"]:
+            self.process_contact_notes(rules)
+        elif group_lower in ["property_notes", "property notes"]:
+            self.process_property_notes(rules)
         else:
             self.engine.log(f"[{self.job_id}] Eagle Processor: Group '{group_name}' logic pending.")
 
@@ -413,7 +426,7 @@ class EagleProcessor:
                     zenu_df[target_field] = combined
                     continue
 
-                if target_field == 'property_full_address':
+                if target_field in ['property_full_address', 'For import']:
                     zenu_df[target_field] = ''
                     continue
 
@@ -441,6 +454,7 @@ class EagleProcessor:
                                     agent_col_query = f"PRAGMA table_info('{target_file}')"
                                     agent_cols = [row[1] for row in cursor.execute(agent_col_query).fetchall()]
                                     if match_key not in agent_cols and 'id' in agent_cols:
+                                        self.engine.log(f"[{self.job_id}] Auto-correcting {target_file} matchKey from {match_key} to id...")
                                         match_key = 'id'
 
                                 lookup_df = pd.read_sql_query(f'SELECT "{match_key}", "{extract_fields[0]}" FROM "{target_file}"', self.conn)
@@ -487,6 +501,33 @@ class EagleProcessor:
                     return ", ".join(parts)
                 
                 zenu_df['property_full_address'] = zenu_df.apply(build_address, axis=1)
+
+            if 'For import' not in zenu_df.columns:
+                zenu_df['For import'] = ''
+
+            self.engine.log(f"[{self.job_id}] Applying deduplication logic for 'For import' flag...")
+            
+            if 'id' in df.columns:
+                zenu_df['_raw_id'] = pd.to_numeric(df['id'], errors='coerce').fillna(0)
+            else:
+                zenu_df['_raw_id'] = 0
+                
+            zenu_df = zenu_df.sort_values(['_raw_id'], ascending=[False])
+            
+            if 'property_sale_method' in zenu_df.columns and 'property_full_address' in zenu_df.columns:
+                zenu_df['_temp_method'] = zenu_df['property_sale_method'].astype(str).str.lower().str.strip()
+                zenu_df['_temp_addr'] = zenu_df['property_full_address'].astype(str).str.lower().str.strip()
+
+                zenu_df['For import'] = np.where(
+                    zenu_df.duplicated(subset=['_temp_method', '_temp_addr'], keep='first'), 
+                    'N', 
+                    'Y'
+                )
+                
+                zenu_df = zenu_df.drop(columns=['_raw_id', '_temp_method', '_temp_addr']).sort_index()
+            else:
+                zenu_df['For import'] = 'Y'
+                zenu_df = zenu_df.drop(columns=['_raw_id']).sort_index()
 
             zenu_df = zenu_df.replace(['nan', 'NaN', 'NAN', 'None', 'NONE', 'none', '<NA>', ''], np.nan)
             
@@ -687,7 +728,7 @@ class EagleProcessor:
             self.engine.log(f"[{self.job_id}] ERROR in Appraisal mapping: {e}")
 
     # =========================================================================================
-    # PROSPECT OWNERS (Updated with Missing safe_str Filter)
+    # PROSPECT OWNERS (Untouched)
     # =========================================================================================
     def process_prospect_owners(self, rules):
         self.engine.log(f"[{self.job_id}] Executing Eagle Transformation for Prospect Owners...")
@@ -717,12 +758,10 @@ class EagleProcessor:
                 
                 primary_src_field = sources[0]['field'] if sources else None
 
-                # 1. Custom Override: Identifier Concatenation (Pr_{address_id})
                 if target_field == 'property_identifier' and primary_src_field in df.columns:
                     zenu_df[target_field] = "Pr_" + df[primary_src_field].apply(safe_str)
                     continue
 
-                # 2. Custom Override: Property Name (Address concatenation)
                 if target_field == 'Property Name':
                     try:
                         target_file = 'addresses.csv' 
@@ -734,12 +773,9 @@ class EagleProcessor:
                         match_key = rule.get('lookupConfig')[0].get('matchKey', 'id') if rule.get('lookupConfig') else 'id'
 
                         lookup_df = pd.read_sql_query(f'SELECT * FROM "{target_file}"', self.conn)
-                        
-                        # FIXED: Apply safe_str to lookup match_key to ensure text-to-decimal matching works!
                         lookup_df[match_key] = lookup_df[match_key].apply(safe_str)
                         
                         def build_prop_name(row):
-                            # FIXED: Apply safe_str directly inside the builder to prevent trailing .0 on unit and postcode
                             u = safe_str(row.get('unit', ''))
                             if u in ['0', '0.0']: u = ''
                             sn = safe_str(row.get('street_no', ''))
@@ -773,7 +809,6 @@ class EagleProcessor:
                         self.engine.log(f"[{self.job_id}] Lookup warning for Property Name: {e}")
                     continue
 
-                # 3. Custom Override: Delay Contact Name until post-processing (Custom_Dummy_Fields)
                 if target_field == 'Contact Name':
                     zenu_df[target_field] = ''
                     continue
@@ -801,7 +836,6 @@ class EagleProcessor:
                                 lookup_df = pd.read_sql_query(f'SELECT "{match_key}", "{extract_fields[0]}" FROM "{target_file}"', self.conn)
                                 lookup_df[match_key] = lookup_df[match_key].apply(safe_str)
                                 
-                                # Use grouped list to preserve 1-to-many splits like 1_c1, 1_c2
                                 grouped_lookup = lookup_df.groupby(match_key)[extract_fields[0]].apply(list).to_dict()
                                 
                                 safe_keys = df[primary_src_field].apply(safe_str)
@@ -810,16 +844,10 @@ class EagleProcessor:
                             except Exception as lookup_err:
                                 self.engine.log(f"[{self.job_id}] Lookup warning for {target_field}: {lookup_err}")
 
-            # ==========================================
-            # POST-PROCESSING: EXPLODE & CLEANUP
-            # ==========================================
-            
-            # Explode lists safely for 1-to-many lookups (Contact splits)
             list_cols = [col for col in zenu_df.columns if zenu_df[col].apply(type).eq(list).any()]
             for col in list_cols:
                 zenu_df = zenu_df.explode(col)
 
-            # Fill Contact Name using the fully mapped and exploded contact_identifiers
             if 'Contact Name' in zenu_df.columns and 'contact_identifier' in zenu_df.columns:
                 try:
                     cleaned_df = pd.read_sql_query('SELECT "CONTACT_IDENTIFIER", "Contact Name" FROM "contact_cleaned.csv"', self.conn)
@@ -830,7 +858,6 @@ class EagleProcessor:
                 except Exception as e:
                     self.engine.log(f"[{self.job_id}] Warning fetching Contact Names: {e}")
 
-            # Null Cleanup
             zenu_df = zenu_df.replace(['nan', 'NaN', 'NAN', 'None', 'NONE', 'none', '<NA>', ''], np.nan)
             
             if 'contact_identifier' in zenu_df.columns:
@@ -840,7 +867,6 @@ class EagleProcessor:
                 
             zenu_df = zenu_df.fillna('')
 
-            # Export
             output_file = os.path.join(self.engine.workspace, "zenu_prospect_owners.xlsx")
             zenu_df.to_excel(output_file, index=False, engine='openpyxl')
             zenu_df.to_sql("zenu_prospect_owners", self.conn, if_exists='replace', index=False)
@@ -848,3 +874,933 @@ class EagleProcessor:
             self.engine.log(f"[{self.job_id}] SUCCESS: Cleaned and mapped {len(zenu_df)} Prospect Owners for Eagle.")
         except Exception as e:
             self.engine.log(f"[{self.job_id}] ERROR in Prospect Owners mapping: {e}")
+
+    # =========================================================================================
+    # APPRAISAL OWNERS (Untouched)
+    # =========================================================================================
+    def process_appraisal_owners(self, rules):
+        self.engine.log(f"[{self.job_id}] Executing Eagle Transformation for Appraisal Owners...")
+        
+        base_file = "appraisal_vendors.csv"
+        
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{base_file}';")
+            if not cursor.fetchone():
+                self.engine.log(f"[{self.job_id}] CRITICAL: '{base_file}' table missing. Cannot process Appraisal Owners.")
+                return
+
+            df = pd.read_sql_query(f'SELECT * FROM "{base_file}"', self.conn)
+
+            def safe_str(x):
+                if pd.isna(x) or str(x).strip().lower() == 'nan': return ''
+                s = str(x).strip()
+                return s[:-2] if s.endswith('.0') else s
+
+            zenu_df = pd.DataFrame(index=df.index)
+
+            for rule in rules:
+                target_field = rule.get('targetField')
+                action = rule.get('action')
+                sources = rule.get('sources', [])
+                
+                primary_src_field = sources[0]['field'] if sources else None
+
+                if target_field == 'property_identifier' and primary_src_field in df.columns:
+                    zenu_df[target_field] = "Appr_" + df[primary_src_field].apply(safe_str)
+                    continue
+
+                if target_field == 'Property Name':
+                    try:
+                        target_file = 'appraisals.csv' 
+                        if rule.get('lookupConfig'):
+                            cfg_file = rule.get('lookupConfig')[0].get('targetFile', '')
+                            if cfg_file.lower() in ['appraisal.csv', 'appraisals.csv']: 
+                                target_file = 'appraisals.csv'
+                            elif cfg_file: 
+                                target_file = cfg_file
+                            
+                        match_key = rule.get('lookupConfig')[0].get('matchKey', 'id') if rule.get('lookupConfig') else 'id'
+
+                        lookup_df = pd.read_sql_query(f'SELECT * FROM "{target_file}"', self.conn)
+                        lookup_df[match_key] = lookup_df[match_key].apply(safe_str)
+                        
+                        def build_prop_name(row):
+                            u = safe_str(row.get('unit', ''))
+                            if u in ['0', '0.0']: u = ''
+                            sn = safe_str(row.get('street_no', ''))
+                            st = safe_str(row.get('street', ''))
+                            sub = safe_str(row.get('suburb', ''))
+                            state = safe_str(row.get('state', ''))
+                            pc = safe_str(row.get('postcode', ''))
+                            
+                            street_part = ""
+                            if u and sn: street_part = f"{u}/{sn}"
+                            elif u: street_part = u
+                            elif sn: street_part = sn
+                                
+                            addr1 = f"{street_part} {st}".strip()
+                            
+                            parts = []
+                            if addr1: parts.append(addr1)
+                            if sub: parts.append(sub)
+                            
+                            state_pc = f"{state} {pc}".strip()
+                            if state_pc: parts.append(state_pc)
+                            
+                            return ", ".join(parts)
+
+                        lookup_df['__built_address'] = lookup_df.apply(build_prop_name, axis=1)
+                        mapping_dict = lookup_df.drop_duplicates(subset=[match_key]).set_index(match_key)['__built_address'].to_dict()
+                        
+                        safe_keys = df[primary_src_field].apply(safe_str)
+                        zenu_df[target_field] = safe_keys.map(mapping_dict)
+                    except Exception as e:
+                        self.engine.log(f"[{self.job_id}] Lookup warning for Property Name: {e}")
+                    continue
+
+                if target_field == 'Contact Name':
+                    zenu_df[target_field] = ''
+                    continue
+
+                if action == 'direct':
+                    if primary_src_field and primary_src_field in df.columns:
+                        zenu_df[target_field] = df[primary_src_field].apply(safe_str)
+
+                elif action == 'static':
+                    zenu_df[target_field] = rule.get('valueExpression', '')
+
+                elif action == 'concat':
+                    if primary_src_field in df.columns:
+                        zenu_df[target_field] = df[primary_src_field].apply(safe_str)
+
+                elif action == 'lookup':
+                    lookup_configs = rule.get('lookupConfig', [])
+                    for config in lookup_configs:
+                        target_file = config.get('targetFile')
+                        match_key = config.get('matchKey')
+                        extract_fields = config.get('extractFields', [])
+                        
+                        if target_file and match_key and extract_fields:
+                            try:
+                                lookup_df = pd.read_sql_query(f'SELECT "{match_key}", "{extract_fields[0]}" FROM "{target_file}"', self.conn)
+                                lookup_df[match_key] = lookup_df[match_key].apply(safe_str)
+                                
+                                grouped_lookup = lookup_df.groupby(match_key)[extract_fields[0]].apply(list).to_dict()
+                                
+                                safe_keys = df[primary_src_field].apply(safe_str)
+                                zenu_df[target_field] = safe_keys.map(grouped_lookup)
+                                
+                            except Exception as lookup_err:
+                                self.engine.log(f"[{self.job_id}] Lookup warning for {target_field}: {lookup_err}")
+
+            list_cols = [col for col in zenu_df.columns if zenu_df[col].apply(type).eq(list).any()]
+            for col in list_cols:
+                zenu_df = zenu_df.explode(col)
+
+            if 'Contact Name' in zenu_df.columns and 'contact_identifier' in zenu_df.columns:
+                try:
+                    cleaned_df = pd.read_sql_query('SELECT "CONTACT_IDENTIFIER", "Contact Name" FROM "contact_cleaned.csv"', self.conn)
+                    cleaned_df['CONTACT_IDENTIFIER'] = cleaned_df['CONTACT_IDENTIFIER'].astype(str)
+                    name_map = cleaned_df.drop_duplicates(subset=['CONTACT_IDENTIFIER']).set_index('CONTACT_IDENTIFIER')['Contact Name'].to_dict()
+                    
+                    zenu_df['Contact Name'] = zenu_df['contact_identifier'].astype(str).map(name_map).fillna('')
+                except Exception as e:
+                    self.engine.log(f"[{self.job_id}] Warning fetching Contact Names: {e}")
+
+            zenu_df = zenu_df.replace(['nan', 'NaN', 'NAN', 'None', 'NONE', 'none', '<NA>', ''], np.nan)
+            
+            if 'contact_identifier' in zenu_df.columns:
+                zenu_df = zenu_df.dropna(subset=['contact_identifier'])
+            if 'property_identifier' in zenu_df.columns:
+                zenu_df = zenu_df.dropna(subset=['property_identifier'])
+                
+            zenu_df = zenu_df.fillna('')
+
+            output_file = os.path.join(self.engine.workspace, "zenu_appraisal_owners.xlsx")
+            zenu_df.to_excel(output_file, index=False, engine='openpyxl')
+            zenu_df.to_sql("zenu_appraisal_owners", self.conn, if_exists='replace', index=False)
+            
+            self.engine.log(f"[{self.job_id}] SUCCESS: Cleaned and mapped {len(zenu_df)} Appraisal Owners for Eagle.")
+        except Exception as e:
+            self.engine.log(f"[{self.job_id}] ERROR in Appraisal Owners mapping: {e}")
+
+    # =========================================================================================
+    # BUYER (Untouched)
+    # =========================================================================================
+    def process_buyer(self, rules):
+        self.engine.log(f"[{self.job_id}] Executing Eagle Transformation for Buyer...")
+        
+        base_file = "purchasers.csv" 
+        
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{base_file}';")
+            if not cursor.fetchone():
+                self.engine.log(f"[{self.job_id}] CRITICAL: '{base_file}' table missing. Cannot process Buyers.")
+                return
+
+            df = pd.read_sql_query(f'SELECT * FROM "{base_file}"', self.conn)
+
+            def safe_str(x):
+                if pd.isna(x) or str(x).strip().lower() == 'nan': return ''
+                s = str(x).strip()
+                return s[:-2] if s.endswith('.0') else s
+
+            zenu_df = pd.DataFrame(index=df.index)
+
+            contracts_dict = {}
+            cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='contracts.csv';")
+            if cursor.fetchone():
+                contracts_df = pd.read_sql_query(f'SELECT * FROM "contracts.csv"', self.conn)
+                contracts_df['id'] = contracts_df['id'].apply(safe_str)
+                contracts_dict = contracts_df.set_index('id').to_dict(orient='index')
+
+            for rule in rules:
+                target_field = rule.get('targetField')
+                action = rule.get('action')
+                sources = rule.get('sources', [])
+                
+                primary_src_field = sources[0]['field'] if sources else None
+                safe_keys = df[primary_src_field].apply(safe_str) if primary_src_field in df.columns else pd.Series()
+
+                if target_field == 'property_identifier':
+                    zenu_df[target_field] = safe_keys.map(lambda k: safe_str(contracts_dict.get(k, {}).get('property_id', '')))
+                    continue
+
+                if target_field == 'Buyer Solicitor Identifier':
+                    try:
+                        solicitor_ids = safe_keys.map(lambda k: safe_str(contracts_dict.get(k, {}).get('purchaser_solicitor_id', '')))
+                        
+                        cleaned_df = pd.read_sql_query('SELECT "Raw ORIG CONTACT_IDENTIFIER", "CONTACT_IDENTIFIER" FROM "contact_cleaned.csv"', self.conn)
+                        cleaned_df['Raw ORIG CONTACT_IDENTIFIER'] = cleaned_df['Raw ORIG CONTACT_IDENTIFIER'].apply(safe_str)
+                        grouped_lookup = cleaned_df.groupby('Raw ORIG CONTACT_IDENTIFIER')['CONTACT_IDENTIFIER'].apply(list).to_dict()
+                        
+                        zenu_df[target_field] = solicitor_ids.map(grouped_lookup)
+                    except Exception as e:
+                        self.engine.log(f"[{self.job_id}] Lookup error for Buyer Solicitor Identifier: {e}")
+                    continue
+
+                if target_field == 'property_contract_date':
+                    raw_dates = safe_keys.map(lambda k: str(contracts_dict.get(k, {}).get('acceptance_date', '')))
+                    clean_dates = raw_dates.str.replace(r'\s*[+-]\d{2}:?\d{2}$', '', regex=True).str.split(' ').str[0].str.strip()
+                    
+                    parsed = pd.to_datetime(clean_dates, format='%d/%m/%Y', errors='coerce')
+                    parsed = parsed.fillna(pd.to_datetime(clean_dates, format='%Y-%m-%d', errors='coerce'))
+                    parsed = parsed.fillna(pd.to_datetime(clean_dates, errors='coerce', dayfirst=True))
+                    
+                    zenu_df[target_field] = parsed.dt.strftime('%d/%m/%Y').fillna('')
+                    continue
+
+                if target_field == 'property_sold_price':
+                    zenu_df[target_field] = safe_keys.map(lambda k: safe_str(contracts_dict.get(k, {}).get('sale_price', '')))
+                    continue
+
+                if target_field == 'Eagle Status':
+                    try:
+                        prop_ids = safe_keys.map(lambda k: safe_str(contracts_dict.get(k, {}).get('property_id', '')))
+                        
+                        props_df = pd.read_sql_query('SELECT id, status FROM "properties.csv"', self.conn)
+                        props_df['id'] = props_df['id'].apply(safe_str)
+                        props_dict = props_df.drop_duplicates(subset=['id']).set_index('id')['status'].to_dict()
+                        
+                        zenu_df[target_field] = prop_ids.map(props_dict).fillna('')
+                    except Exception as e:
+                        self.engine.log(f"[{self.job_id}] Lookup error for Eagle Status: {e}")
+                    continue
+
+                if action == 'direct':
+                    if primary_src_field and primary_src_field in df.columns:
+                        zenu_df[target_field] = df[primary_src_field].apply(safe_str)
+
+                elif action == 'static':
+                    zenu_df[target_field] = rule.get('valueExpression', '')
+
+                elif action == 'lookup':
+                    lookup_configs = rule.get('lookupConfig', [])
+                    config = lookup_configs[0] if lookup_configs else {}
+                    target_file = config.get('targetFile')
+                    match_key = config.get('matchKey')
+                    extract_fields = config.get('extractFields', [])
+
+                    if target_file and match_key and extract_fields:
+                        try:
+                            lookup_df = pd.read_sql_query(f'SELECT "{match_key}", "{extract_fields[0]}" FROM "{target_file}"', self.conn)
+                            lookup_df[match_key] = lookup_df[match_key].apply(safe_str)
+
+                            grouped_lookup = lookup_df.groupby(match_key)[extract_fields[0]].apply(list).to_dict()
+                            zenu_df[target_field] = safe_keys.map(grouped_lookup)
+                        except Exception as lookup_err:
+                            self.engine.log(f"[{self.job_id}] Lookup warning for {target_field}: {lookup_err}")
+
+            list_cols = [col for col in zenu_df.columns if zenu_df[col].apply(type).eq(list).any()]
+            for col in list_cols:
+                zenu_df = zenu_df.explode(col)
+
+            zenu_df = zenu_df.replace(['nan', 'NaN', 'NAN', 'None', 'NONE', 'none', '<NA>', ''], np.nan)
+
+            if 'contact_identifier' in zenu_df.columns:
+                zenu_df = zenu_df.dropna(subset=['contact_identifier'])
+            if 'property_identifier' in zenu_df.columns:
+                zenu_df = zenu_df.dropna(subset=['property_identifier'])
+
+            zenu_df = zenu_df.fillna('')
+
+            output_file = os.path.join(self.engine.workspace, "zenu_buyer.xlsx")
+            zenu_df.to_excel(output_file, index=False, engine='openpyxl')
+            zenu_df.to_sql("zenu_buyer", self.conn, if_exists='replace', index=False)
+
+            self.engine.log(f"[{self.job_id}] SUCCESS: Cleaned and mapped {len(zenu_df)} Buyers for Eagle.")
+        except Exception as e:
+            self.engine.log(f"[{self.job_id}] ERROR in Buyer mapping: {e}")
+
+    # =========================================================================================
+    # VENDOR (Untouched)
+    # =========================================================================================
+    def process_vendor(self, rules):
+        self.engine.log(f"[{self.job_id}] Executing Eagle Transformation for Vendor...")
+        
+        base_file = "vendors.csv"
+        
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{base_file}';")
+            if not cursor.fetchone():
+                self.engine.log(f"[{self.job_id}] CRITICAL: '{base_file}' table missing. Cannot process Vendors.")
+                return
+
+            df = pd.read_sql_query(f'SELECT * FROM "{base_file}"', self.conn)
+
+            def safe_str(x):
+                if pd.isna(x) or str(x).strip().lower() == 'nan': return ''
+                s = str(x).strip()
+                return s[:-2] if s.endswith('.0') else s
+
+            zenu_df = pd.DataFrame(index=df.index)
+
+            for rule in rules:
+                target_field = rule.get('targetField')
+                action = rule.get('action')
+                sources = rule.get('sources', [])
+                
+                primary_src_field = sources[0]['field'] if sources else None
+                safe_keys = df[primary_src_field].apply(safe_str) if primary_src_field in df.columns else pd.Series()
+
+                if action == 'direct':
+                    if primary_src_field and primary_src_field in df.columns:
+                        zenu_df[target_field] = df[primary_src_field].apply(safe_str)
+
+                elif action == 'static':
+                    zenu_df[target_field] = rule.get('valueExpression', '')
+
+                elif action == 'concat':
+                    if primary_src_field in df.columns:
+                        zenu_df[target_field] = df[primary_src_field].apply(safe_str)
+
+                elif action == 'lookup':
+                    lookup_configs = rule.get('lookupConfig', [])
+                    for config in lookup_configs:
+                        target_file = config.get('targetFile')
+                        match_key = config.get('matchKey')
+                        extract_fields = config.get('extractFields', [])
+                        
+                        if target_file and match_key and extract_fields:
+                            try:
+                                lookup_df = pd.read_sql_query(f'SELECT "{match_key}", "{extract_fields[0]}" FROM "{target_file}"', self.conn)
+                                lookup_df[match_key] = lookup_df[match_key].apply(safe_str)
+                                
+                                # Use grouped list to preserve 1-to-many splits like 1_c1, 1_c2
+                                grouped_lookup = lookup_df.groupby(match_key)[extract_fields[0]].apply(list).to_dict()
+                                zenu_df[target_field] = safe_keys.map(grouped_lookup)
+                                
+                            except Exception as lookup_err:
+                                self.engine.log(f"[{self.job_id}] Lookup warning for {target_field}: {lookup_err}")
+
+            # ==========================================
+            # POST-PROCESSING: EXPLODE & CLEANUP
+            # ==========================================
+            
+            list_cols = [col for col in zenu_df.columns if zenu_df[col].apply(type).eq(list).any()]
+            for col in list_cols:
+                zenu_df = zenu_df.explode(col)
+
+            # Null Cleanup
+            zenu_df = zenu_df.replace(['nan', 'NaN', 'NAN', 'None', 'NONE', 'none', '<NA>', ''], np.nan)
+
+            if 'Vendor Identifier' in zenu_df.columns:
+                zenu_df = zenu_df.dropna(subset=['Vendor Identifier'])
+                
+                self.engine.log(f"[{self.job_id}] Filtering Vendor Identifier to exclude _c2 and above...")
+                mask_c2_above = zenu_df['Vendor Identifier'].astype(str).str.contains(r'_c[2-9]\d*$', case=False, regex=True)
+                zenu_df = zenu_df[~mask_c2_above]
+
+            if 'property_identifier' in zenu_df.columns:
+                zenu_df = zenu_df.dropna(subset=['property_identifier'])
+
+            zenu_df = zenu_df.fillna('')
+
+            # Export
+            output_file = os.path.join(self.engine.workspace, "zenu_vendor.xlsx")
+            zenu_df.to_excel(output_file, index=False, engine='openpyxl')
+            zenu_df.to_sql("zenu_vendor", self.conn, if_exists='replace', index=False)
+
+            self.engine.log(f"[{self.job_id}] SUCCESS: Cleaned and mapped {len(zenu_df)} Vendors for Eagle.")
+        except Exception as e:
+            self.engine.log(f"[{self.job_id}] ERROR in Vendor mapping: {e}")
+
+    # =========================================================================================
+    # ENQUIRIES (Untouched)
+    # =========================================================================================
+    def process_enquiries(self, rules):
+        self.engine.log(f"[{self.job_id}] Executing Eagle Transformation for Enquiries...")
+        
+        base_file = "notes.csv"
+        
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{base_file}';")
+            if not cursor.fetchone():
+                self.engine.log(f"[{self.job_id}] CRITICAL: '{base_file}' table missing. Cannot process Enquiries.")
+                return
+
+            df = pd.read_sql_query(f'SELECT * FROM "{base_file}"', self.conn)
+
+            def safe_str(x):
+                if pd.isna(x) or str(x).strip().lower() == 'nan': return ''
+                s = str(x).strip()
+                return s[:-2] if s.endswith('.0') else s
+                
+            def parse_au_date(date_series):
+                clean_str = date_series.astype(str).str.replace(r'\s*[+-]\d{2}:?\d{2}$', '', regex=True).str.split(' ').str[0].str.strip()
+                parsed = pd.to_datetime(clean_str, format='%d/%m/%Y', errors='coerce')
+                parsed = parsed.fillna(pd.to_datetime(clean_str, format='%Y-%m-%d', errors='coerce'))
+                parsed = parsed.fillna(pd.to_datetime(clean_str, errors='coerce', dayfirst=True))
+                return parsed
+
+            if 'note_type' in df.columns:
+                self.engine.log(f"[{self.job_id}] Pre-filtering notes.csv to isolate Enquiries...")
+                df = df[df['note_type'].astype(str).str.strip().str.lower() == 'enquiry'].reset_index(drop=True)
+            else:
+                self.engine.log(f"[{self.job_id}] WARNING: 'note_type' missing. Proceeding without filter.")
+
+            zenu_df = pd.DataFrame(index=df.index)
+
+            for rule in rules:
+                target_field = rule.get('targetField')
+                action = rule.get('action')
+                sources = rule.get('sources', [])
+                
+                primary_src_field = sources[0]['field'] if sources else None
+                safe_keys = df[primary_src_field].apply(safe_str) if primary_src_field in df.columns else pd.Series()
+
+                if target_field == 'enquiry_notes' and primary_src_field in df.columns:
+                    zenu_df[target_field] = df[primary_src_field].astype(str).str.strip().str.replace(r'^\s*-\s*', '', regex=True)
+                    zenu_df[target_field] = zenu_df[target_field].replace(['nan', 'NaN', 'None'], '')
+                    continue
+
+                if target_field == 'enquiry_date_created' and primary_src_field in df.columns:
+                    raw_dates = parse_au_date(df[primary_src_field])
+                    zenu_df[target_field] = raw_dates.dt.strftime('%d/%m/%Y').fillna('')
+                    continue
+                    
+                if target_field == 'contact_identifier' and primary_src_field in df.columns:
+                    try:
+                        cleaned_df = pd.read_sql_query('SELECT "Raw ORIG CONTACT_IDENTIFIER", "CONTACT_IDENTIFIER" FROM "contact_cleaned.csv"', self.conn)
+                        cleaned_df['Raw ORIG CONTACT_IDENTIFIER'] = cleaned_df['Raw ORIG CONTACT_IDENTIFIER'].apply(safe_str)
+                        
+                        cleaned_dict = cleaned_df.drop_duplicates(subset=['Raw ORIG CONTACT_IDENTIFIER'], keep='first').set_index('Raw ORIG CONTACT_IDENTIFIER')['CONTACT_IDENTIFIER'].to_dict()
+                        zenu_df[target_field] = safe_keys.map(cleaned_dict).fillna('')
+                    except Exception as e:
+                        self.engine.log(f"[{self.job_id}] Lookup error for {target_field}: {e}")
+                    continue
+
+                if target_field == 'enquiry_identifier' and primary_src_field in df.columns:
+                    zenu_df[target_field] = "Enq_" + df[primary_src_field].apply(safe_str)
+                    continue
+
+                if target_field == 'enquiry_team_member_1' and primary_src_field in df.columns:
+                    try:
+                        agents_df = pd.read_sql_query('SELECT user_id, name FROM "agents.csv"', self.conn)
+                        agents_df['user_id'] = agents_df['user_id'].apply(safe_str)
+                        agents_dict = agents_df.drop_duplicates(subset=['user_id']).set_index('user_id')['name'].to_dict()
+                        
+                        zenu_df[target_field] = safe_keys.apply(
+                            lambda k: str(agents_dict.get(k, '')).strip() if k != '' else ''
+                        ).replace(['nan', 'NaN', 'None'], '')
+                    except Exception as e:
+                        self.engine.log(f"[{self.job_id}] Lookup error for enquiry_team_member_1: {e}")
+                    continue
+
+                if action == 'direct':
+                    if primary_src_field and primary_src_field in df.columns:
+                        zenu_df[target_field] = df[primary_src_field].apply(safe_str)
+
+                elif action == 'static':
+                    zenu_df[target_field] = rule.get('valueExpression', '')
+
+                elif action == 'concat':
+                    if primary_src_field in df.columns:
+                        zenu_df[target_field] = df[primary_src_field].apply(safe_str)
+
+                elif action == 'lookup':
+                    lookup_configs = rule.get('lookupConfig', [])
+                    for config in lookup_configs:
+                        target_file = config.get('targetFile')
+                        match_key = config.get('matchKey')
+                        extract_fields = config.get('extractFields', [])
+                        
+                        if target_file and match_key and extract_fields:
+                            try:
+                                lookup_df = pd.read_sql_query(f'SELECT "{match_key}", "{extract_fields[0]}" FROM "{target_file}"', self.conn)
+                                lookup_df[match_key] = lookup_df[match_key].apply(safe_str)
+                                
+                                mapping_dict = lookup_df.drop_duplicates(subset=[match_key], keep='first').set_index(match_key)[extract_fields[0]].to_dict()
+                                zenu_df[target_field] = safe_keys.map(mapping_dict)
+                                
+                                if 'team_member' in target_field.lower() or 'source' in target_field.lower():
+                                    zenu_df[target_field] = zenu_df[target_field].astype(str).str.strip().replace(['nan', 'NaN', 'None'], '')
+                                
+                                zenu_df[target_field] = zenu_df[target_field].fillna('')
+                                zenu_df.loc[safe_keys == '', target_field] = ''
+                                
+                            except Exception as lookup_err:
+                                self.engine.log(f"[{self.job_id}] Lookup warning for {target_field}: {lookup_err}")
+
+            zenu_df = zenu_df.replace(['nan', 'NaN', 'NAN', 'None', 'NONE', 'none', '<NA>', ''], np.nan)
+            
+            if 'enquiry_identifier' in zenu_df.columns:
+                zenu_df = zenu_df.dropna(subset=['enquiry_identifier'])
+                
+            zenu_df = zenu_df.fillna('')
+
+            output_file = os.path.join(self.engine.workspace, "zenu_enquiries.xlsx")
+            zenu_df.to_excel(output_file, index=False, engine='openpyxl')
+            zenu_df.to_sql("zenu_enquiries", self.conn, if_exists='replace', index=False)
+            
+            self.engine.log(f"[{self.job_id}] SUCCESS: Cleaned and mapped {len(zenu_df)} Enquiries for Eagle.")
+        except Exception as e:
+            self.engine.log(f"[{self.job_id}] ERROR in Enquiries mapping: {e}")
+
+    # =========================================================================================
+    # CONTACT NOTES (Untouched)
+    # =========================================================================================
+    def process_contact_notes(self, rules):
+        self.engine.log(f"[{self.job_id}] Executing Eagle Transformation for Contact Notes...")
+        
+        base_file = "notes.csv"
+        
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{base_file}';")
+            if not cursor.fetchone():
+                self.engine.log(f"[{self.job_id}] CRITICAL: '{base_file}' table missing. Cannot process Contact Notes.")
+                return
+
+            df = pd.read_sql_query(f'SELECT * FROM "{base_file}"', self.conn)
+
+            def safe_str(x):
+                if pd.isna(x) or str(x).strip().lower() == 'nan': return ''
+                s = str(x).strip()
+                return s[:-2] if s.endswith('.0') else s
+                
+            def parse_au_date(date_series):
+                clean_str = date_series.astype(str).str.replace(r'\s*[+-]\d{2}:?\d{2}$', '', regex=True).str.split(' ').str[0].str.strip()
+                parsed = pd.to_datetime(clean_str, format='%d/%m/%Y', errors='coerce')
+                parsed = parsed.fillna(pd.to_datetime(clean_str, format='%Y-%m-%d', errors='coerce'))
+                parsed = parsed.fillna(pd.to_datetime(clean_str, errors='coerce', dayfirst=True))
+                return parsed
+
+            # ==========================================
+            # MASSIVE SQL-LIKE PRE-FILTER
+            # ==========================================
+            self.engine.log(f"[{self.job_id}] Applying strict IN and NOT LIKE filters to notes.csv...")
+            
+            valid_types = [
+                'email', 'inbound sms', 'owner added to address', 'owner removed from address', 
+                'property alert email', 'sms', 'tenant added to address', 'tenant removed from address', 
+                'unsubscribe', 'update appraisal status', 'update property status', 'websitelog'
+            ]
+            
+            if 'note_type' in df.columns:
+                df = df[df['note_type'].astype(str).str.strip().str.lower().isin(valid_types)]
+                
+            exclusions = [
+                'sent bulk', 'delivery to', 'contact details updated', 'system - bulk assign category:',
+                'mass communicator', 'market report generated', 'matched properties emailed',
+                'added by property wizard', 'sent rh automated ecommunication', 'bulk document mail merge',
+                'inserted via contact wizard', 'wizard', 'unsubscribed from email communications',
+                'contact dominantly merge', 'change of address', 'change of name', 'change of mobile',
+                'change of phone', 'email address changed', 'legal description changed',
+                'mobile number changed', 'telephone number changed', 'vendor feedback report',
+                'vendor report generated', 'unsubscribe from all', 'contact unsubscribed from emails',
+                'call placed', 'contact added into mri vault', 'added to quick attendance',
+                'contact created by', 'added by property', 'unsubscribed from market report reason:',
+                'assigned to distribution list', 'unsubscribed from', 'mobile number (primary)',
+                'first point of contact modified by', 'address changed from',
+                'telephone number (work) changed', 'name changed from', 'subject: ',
+                '{"sms_batch_row_id"', 'contact merged by duplicate', 'sent action trigger email',
+                'property status updated', 'pages visited', 'campaign <a href=', 'market update due',
+                'market update', 'property alert email', 'follow up from note',
+                "appraisal status updated to 'active'", "property status updated to 'draft'",
+                "property status updated to 'active'", "property status updated to 'sold'",
+                "property status updated to 'let'", "property status updated to 'under offer'",
+                "property status updated to 'withdrawn'", "appraisal status updated to 'won'",
+                "contract status updated to 'settled'", "contract status updated to 'accepted'",
+                "property status updated to 'deleted'", "appraisal status updated to 'lost'",
+                "property status updated to 'off market'", "contract status updated to 'finance approved'",
+                "contract status updated to 'deposit received'", "contract status updated to 'unconditional'"
+            ]
+            
+            def is_valid_text(t):
+                if pd.isna(t) or str(t).strip() == '': return True
+                t_lower = str(t).lower().strip()
+                for ex in exclusions:
+                    if t_lower.startswith(ex):
+                        return False
+                return True
+                
+            if 'text' in df.columns:
+                df = df[df['text'].apply(is_valid_text)].reset_index(drop=True)
+            # ==========================================
+            
+            zenu_df = pd.DataFrame(index=df.index)
+            
+            # Pre-load properties.csv to memory for the complex Contact Note concatenation
+            props_dict = {}
+            cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='properties.csv';")
+            if cursor.fetchone():
+                props_df = pd.read_sql_query('SELECT * FROM "properties.csv"', self.conn)
+                props_df['id'] = props_df['id'].apply(safe_str)
+                
+                def build_prop_addr(row):
+                    u = safe_str(row.get('unit', ''))
+                    if u in ['0', '0.0']: u = ''
+                    sn = safe_str(row.get('street_no', ''))
+                    st = safe_str(row.get('street', ''))
+                    sub = safe_str(row.get('suburb', ''))
+                    state = safe_str(row.get('state', ''))
+                    pc = safe_str(row.get('postcode', ''))
+
+                    street_part = ""
+                    if u and sn: street_part = f"{u}/{sn}"
+                    elif u: street_part = u
+                    elif sn: street_part = sn
+                    
+                    addr1 = f"{street_part} {st}".strip()
+                    
+                    parts = []
+                    if addr1: parts.append(addr1)
+                    if sub: parts.append(sub)
+                    state_pc = f"{state} {pc}".strip()
+                    if state_pc: parts.append(state_pc)
+                    
+                    return ", ".join(parts)
+                    
+                if not props_df.empty:
+                    props_df['_clean_addr'] = props_df.apply(build_prop_addr, axis=1)
+                    props_dict = props_df.set_index('id')['_clean_addr'].to_dict()
+
+            for rule in rules:
+                target_field = rule.get('targetField')
+                action = rule.get('action')
+                sources = rule.get('sources', [])
+                
+                primary_src_field = sources[0]['field'] if sources else None
+                safe_keys = df[primary_src_field].apply(safe_str) if primary_src_field in df.columns else pd.Series(dtype=str)
+
+                if target_field == 'contact_note_created_date' and primary_src_field in df.columns:
+                    raw_dates = parse_au_date(df[primary_src_field])
+                    zenu_df[target_field] = raw_dates.dt.strftime('%d/%m/%Y').fillna('')
+                    continue
+
+                if target_field == 'contact_note_team_member' and primary_src_field in df.columns:
+                    try:
+                        agents_df = pd.read_sql_query('SELECT user_id, name FROM "agents.csv"', self.conn)
+                        agents_df['user_id'] = agents_df['user_id'].apply(safe_str)
+                        agents_dict = agents_df.drop_duplicates(subset=['user_id']).set_index('user_id')['name'].to_dict()
+                        
+                        zenu_df[target_field] = safe_keys.apply(
+                            lambda k: str(agents_dict.get(k, '')).strip() if k != '' else ''
+                        ).replace(['nan', 'NaN', 'None'], '')
+                    except Exception as e:
+                        self.engine.log(f"[{self.job_id}] Lookup error for contact_note_team_member: {e}")
+                    continue
+
+                if target_field == 'contact_identifier' and primary_src_field in df.columns:
+                    try:
+                        cleaned_df = pd.read_sql_query('SELECT "Raw ORIG CONTACT_IDENTIFIER", "CONTACT_IDENTIFIER" FROM "contact_cleaned.csv"', self.conn)
+                        cleaned_df['Raw ORIG CONTACT_IDENTIFIER'] = cleaned_df['Raw ORIG CONTACT_IDENTIFIER'].apply(safe_str)
+                        grouped_lookup = cleaned_df.groupby('Raw ORIG CONTACT_IDENTIFIER')['CONTACT_IDENTIFIER'].apply(list).to_dict()
+                        
+                        zenu_df[target_field] = safe_keys.map(grouped_lookup)
+                    except Exception as e:
+                        self.engine.log(f"[{self.job_id}] Lookup error for contact_identifier: {e}")
+                    continue
+
+                if target_field == 'contact_notes':
+                    def build_final_note(row):
+                        prop_id = safe_str(row.get('property_id', ''))
+                        addr = props_dict.get(prop_id, "")
+                        ntype = str(row.get('note_type', '')).strip()
+                        text = str(row.get('text', '')).strip()
+                        
+                        parts = []
+                        if addr: parts.append(f"Property: {addr}")
+                        else: parts.append("Property:") 
+                        
+                        if ntype: parts.append(ntype)
+                        if text: parts.append(text)
+                        
+                        return " - ".join(parts)
+                        
+                    if df.empty:
+                        zenu_df[target_field] = pd.Series(dtype=str)
+                    else:
+                        zenu_df[target_field] = df.apply(build_final_note, axis=1)
+                    continue
+
+                if action == 'direct':
+                    if primary_src_field and primary_src_field in df.columns:
+                        zenu_df[target_field] = df[primary_src_field].apply(safe_str)
+
+                elif action == 'static':
+                    zenu_df[target_field] = rule.get('valueExpression', '')
+
+                elif action == 'concat':
+                    if primary_src_field in df.columns:
+                        zenu_df[target_field] = df[primary_src_field].apply(safe_str)
+
+                elif action == 'lookup':
+                    lookup_configs = rule.get('lookupConfig', [])
+                    for config in lookup_configs:
+                        target_file = config.get('targetFile')
+                        match_key = config.get('matchKey')
+                        extract_fields = config.get('extractFields', [])
+                        
+                        if target_file and match_key and extract_fields:
+                            try:
+                                lookup_df = pd.read_sql_query(f'SELECT "{match_key}", "{extract_fields[0]}" FROM "{target_file}"', self.conn)
+                                lookup_df[match_key] = lookup_df[match_key].apply(safe_str)
+                                
+                                mapping_dict = lookup_df.drop_duplicates(subset=[match_key], keep='first').set_index(match_key)[extract_fields[0]].to_dict()
+                                zenu_df[target_field] = safe_keys.map(mapping_dict)
+                                
+                            except Exception as lookup_err:
+                                self.engine.log(f"[{self.job_id}] Lookup warning for {target_field}: {lookup_err}")
+
+            # ==========================================
+            # POST-PROCESSING: EXPLODE & ILLEGAL CHARACTER CLEANUP
+            # ==========================================
+            list_cols = [col for col in zenu_df.columns if zenu_df[col].apply(type).eq(list).any()]
+            for col in list_cols:
+                zenu_df = zenu_df.explode(col)
+
+            if not zenu_df.empty:
+                for col in zenu_df.columns:
+                    zenu_df[col] = zenu_df[col].astype(str).replace(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', regex=True)
+                zenu_df = zenu_df.replace(['nan', 'NaN', 'NAN', 'None', 'NONE', 'none', '<NA>', ''], np.nan)
+            
+            if 'contact_identifier' in zenu_df.columns:
+                zenu_df = zenu_df.dropna(subset=['contact_identifier'])
+                
+            zenu_df = zenu_df.fillna('')
+
+            output_file = os.path.join(self.engine.workspace, "zenu_contact_notes.xlsx")
+            zenu_df.to_excel(output_file, index=False, engine='openpyxl')
+            zenu_df.to_sql("zenu_contact_notes", self.conn, if_exists='replace', index=False)
+            
+            self.engine.log(f"[{self.job_id}] SUCCESS: Cleaned and mapped {len(zenu_df)} Contact Notes for Eagle.")
+        except Exception as e:
+            self.engine.log(f"[{self.job_id}] ERROR in Contact Notes mapping: {e}")
+
+    # =========================================================================================
+    # PROPERTY NOTES (Updated `agents.csv` query from 'id' to 'user_id')
+    # =========================================================================================
+    def process_property_notes(self, rules):
+        self.engine.log(f"[{self.job_id}] Executing Eagle Transformation for Property Notes...")
+        
+        base_file = "notes.csv"
+        
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{base_file}';")
+            if not cursor.fetchone():
+                self.engine.log(f"[{self.job_id}] CRITICAL: '{base_file}' table missing. Cannot process Property Notes.")
+                return
+
+            df = pd.read_sql_query(f'SELECT * FROM "{base_file}"', self.conn)
+
+            def safe_str(x):
+                if pd.isna(x) or str(x).strip().lower() == 'nan': return ''
+                s = str(x).strip()
+                return s[:-2] if s.endswith('.0') else s
+                
+            def parse_au_date(date_series):
+                clean_str = date_series.astype(str).str.replace(r'\s*[+-]\d{2}:?\d{2}$', '', regex=True).str.split(' ').str[0].str.strip()
+                parsed = pd.to_datetime(clean_str, format='%d/%m/%Y', errors='coerce')
+                parsed = parsed.fillna(pd.to_datetime(clean_str, format='%Y-%m-%d', errors='coerce'))
+                parsed = parsed.fillna(pd.to_datetime(clean_str, errors='coerce', dayfirst=True))
+                return parsed
+
+            # ==========================================
+            # MASSIVE SQL-LIKE PRE-FILTER (Same as Contact Notes)
+            # ==========================================
+            valid_types = [
+                'email', 'inbound sms', 'owner added to address', 'owner removed from address', 
+                'property alert email', 'sms', 'tenant added to address', 'tenant removed from address', 
+                'unsubscribe', 'update appraisal status', 'update property status', 'websitelog'
+            ]
+            
+            if 'note_type' in df.columns:
+                df = df[df['note_type'].astype(str).str.strip().str.lower().isin(valid_types)]
+                
+            exclusions = [
+                'sent bulk', 'delivery to', 'contact details updated', 'system - bulk assign category:',
+                'mass communicator', 'market report generated', 'matched properties emailed',
+                'added by property wizard', 'sent rh automated ecommunication', 'bulk document mail merge',
+                'inserted via contact wizard', 'wizard', 'unsubscribed from email communications',
+                'contact dominantly merge', 'change of address', 'change of name', 'change of mobile',
+                'change of phone', 'email address changed', 'legal description changed',
+                'mobile number changed', 'telephone number changed', 'vendor feedback report',
+                'vendor report generated', 'unsubscribe from all', 'contact unsubscribed from emails',
+                'call placed', 'contact added into mri vault', 'added to quick attendance',
+                'contact created by', 'added by property', 'unsubscribed from market report reason:',
+                'assigned to distribution list', 'unsubscribed from', 'mobile number (primary)',
+                'first point of contact modified by', 'address changed from',
+                'telephone number (work) changed', 'name changed from', 'subject: ',
+                '{"sms_batch_row_id"', 'contact merged by duplicate', 'sent action trigger email',
+                'property status updated', 'pages visited', 'campaign <a href=', 'market update due',
+                'market update', 'property alert email', 'follow up from note',
+                "appraisal status updated to 'active'", "property status updated to 'draft'",
+                "property status updated to 'active'", "property status updated to 'sold'",
+                "property status updated to 'let'", "property status updated to 'under offer'",
+                "property status updated to 'withdrawn'", "appraisal status updated to 'won'",
+                "contract status updated to 'settled'", "contract status updated to 'accepted'",
+                "property status updated to 'deleted'", "appraisal status updated to 'lost'",
+                "property status updated to 'off market'", "contract status updated to 'finance approved'",
+                "contract status updated to 'deposit received'", "contract status updated to 'unconditional'"
+            ]
+            
+            def is_valid_text(t):
+                if pd.isna(t) or str(t).strip() == '': return True
+                t_lower = str(t).lower().strip()
+                for ex in exclusions:
+                    if t_lower.startswith(ex):
+                        return False
+                return True
+                
+            if 'text' in df.columns:
+                df = df[df['text'].apply(is_valid_text)].reset_index(drop=True)
+            # ==========================================
+            
+            zenu_df = pd.DataFrame(index=df.index)
+            
+            # Pre-load contact_cleaned.csv to memory for the complex Property Note concatenation
+            contact_dict = {}
+            cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='contact_cleaned.csv';")
+            if cursor.fetchone():
+                cleaned_df = pd.read_sql_query('SELECT "Raw ORIG CONTACT_IDENTIFIER", "Contact Name" FROM "contact_cleaned.csv"', self.conn)
+                cleaned_df['Raw ORIG CONTACT_IDENTIFIER'] = cleaned_df['Raw ORIG CONTACT_IDENTIFIER'].apply(safe_str)
+                contact_dict = cleaned_df.drop_duplicates(subset=['Raw ORIG CONTACT_IDENTIFIER'], keep='first').set_index('Raw ORIG CONTACT_IDENTIFIER')['Contact Name'].to_dict()
+
+            for rule in rules:
+                target_field = rule.get('targetField')
+                action = rule.get('action')
+                sources = rule.get('sources', [])
+                
+                primary_src_field = sources[0]['field'] if sources else None
+                safe_keys = df[primary_src_field].apply(safe_str) if primary_src_field in df.columns else pd.Series(dtype=str)
+
+                if target_field == 'property_note_created_date' and primary_src_field in df.columns:
+                    raw_dates = parse_au_date(df[primary_src_field])
+                    zenu_df[target_field] = raw_dates.dt.strftime('%d/%m/%Y').fillna('')
+                    continue
+
+                if target_field == 'property_note_team_member' and primary_src_field in df.columns:
+                    try:
+                        # FIXED: Select user_id instead of id
+                        agents_df = pd.read_sql_query('SELECT user_id, name FROM "agents.csv"', self.conn)
+                        agents_df['user_id'] = agents_df['user_id'].apply(safe_str)
+                        agents_dict = agents_df.drop_duplicates(subset=['user_id']).set_index('user_id')['name'].to_dict()
+                        
+                        zenu_df[target_field] = safe_keys.apply(
+                            lambda k: str(agents_dict.get(k, '')).strip() if k != '' else ''
+                        ).replace(['nan', 'NaN', 'None'], '')
+                    except Exception as e:
+                        self.engine.log(f"[{self.job_id}] Lookup error for property_note_team_member: {e}")
+                    continue
+
+                if target_field == 'property_notes':
+                    def build_prop_note(row):
+                        cid = safe_str(row.get('contact_id', ''))
+                        cname = contact_dict.get(cid, '')
+                        ntype = str(row.get('note_type', '')).strip()
+                        text = str(row.get('text', '')).strip()
+                        
+                        parts = []
+                        if cname: parts.append(f"Regarding {cname}")
+                        else: parts.append("Regarding Contact")
+                        
+                        if ntype: parts.append(ntype)
+                        if text: parts.append(text)
+                        
+                        return " - ".join(parts)
+                        
+                    if df.empty:
+                        zenu_df[target_field] = pd.Series(dtype=str)
+                    else:
+                        zenu_df[target_field] = df.apply(build_prop_note, axis=1)
+                    continue
+
+                if action == 'direct':
+                    if primary_src_field and primary_src_field in df.columns:
+                        zenu_df[target_field] = df[primary_src_field].apply(safe_str)
+
+                elif action == 'static':
+                    zenu_df[target_field] = rule.get('valueExpression', '')
+
+                elif action == 'concat':
+                    if primary_src_field in df.columns:
+                        zenu_df[target_field] = df[primary_src_field].apply(safe_str)
+
+                elif action == 'lookup':
+                    lookup_configs = rule.get('lookupConfig', [])
+                    for config in lookup_configs:
+                        target_file = config.get('targetFile')
+                        match_key = config.get('matchKey')
+                        extract_fields = config.get('extractFields', [])
+                        
+                        if target_file and match_key and extract_fields:
+                            try:
+                                lookup_df = pd.read_sql_query(f'SELECT "{match_key}", "{extract_fields[0]}" FROM "{target_file}"', self.conn)
+                                lookup_df[match_key] = lookup_df[match_key].apply(safe_str)
+                                
+                                mapping_dict = lookup_df.drop_duplicates(subset=[match_key], keep='first').set_index(match_key)[extract_fields[0]].to_dict()
+                                zenu_df[target_field] = safe_keys.map(mapping_dict)
+                                
+                            except Exception as lookup_err:
+                                self.engine.log(f"[{self.job_id}] Lookup warning for {target_field}: {lookup_err}")
+
+            # ==========================================
+            # POST-PROCESSING: EXPLODE & ILLEGAL CHARACTER CLEANUP
+            # ==========================================
+            list_cols = [col for col in zenu_df.columns if zenu_df[col].apply(type).eq(list).any()]
+            for col in list_cols:
+                zenu_df = zenu_df.explode(col)
+
+            if not zenu_df.empty:
+                for col in zenu_df.columns:
+                    zenu_df[col] = zenu_df[col].astype(str).replace(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', regex=True)
+                zenu_df = zenu_df.replace(['nan', 'NaN', 'NAN', 'None', 'NONE', 'none', '<NA>', ''], np.nan)
+            
+            # Per JSON instructions: DO NOT dropna for property_identifier! Let it export even if blank.
+                
+            zenu_df = zenu_df.fillna('')
+
+            output_file = os.path.join(self.engine.workspace, "zenu_property_notes.xlsx")
+            zenu_df.to_excel(output_file, index=False, engine='openpyxl')
+            zenu_df.to_sql("zenu_property_notes", self.conn, if_exists='replace', index=False)
+            
+            self.engine.log(f"[{self.job_id}] SUCCESS: Cleaned and mapped {len(zenu_df)} Property Notes for Eagle.")
+        except Exception as e:
+            self.engine.log(f"[{self.job_id}] ERROR in Property Notes mapping: {e}")
