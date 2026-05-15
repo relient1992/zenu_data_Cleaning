@@ -34,6 +34,8 @@ class EagleProcessor:
             self.process_contact_notes(rules)
         elif group_lower in ["property_notes", "property notes"]:
             self.process_property_notes(rules)
+        elif group_lower == "tasks":
+            self.process_tasks(rules)
         else:
             self.engine.log(f"[{self.job_id}] Eagle Processor: Group '{group_name}' logic pending.")
 
@@ -1614,7 +1616,7 @@ class EagleProcessor:
             self.engine.log(f"[{self.job_id}] ERROR in Contact Notes mapping: {e}")
 
     # =========================================================================================
-    # PROPERTY NOTES (Updated `agents.csv` query from 'id' to 'user_id')
+    # PROPERTY NOTES (Untouched)
     # =========================================================================================
     def process_property_notes(self, rules):
         self.engine.log(f"[{self.job_id}] Executing Eagle Transformation for Property Notes...")
@@ -1718,7 +1720,6 @@ class EagleProcessor:
 
                 if target_field == 'property_note_team_member' and primary_src_field in df.columns:
                     try:
-                        # FIXED: Select user_id instead of id
                         agents_df = pd.read_sql_query('SELECT user_id, name FROM "agents.csv"', self.conn)
                         agents_df['user_id'] = agents_df['user_id'].apply(safe_str)
                         agents_dict = agents_df.drop_duplicates(subset=['user_id']).set_index('user_id')['name'].to_dict()
@@ -1793,8 +1794,6 @@ class EagleProcessor:
                     zenu_df[col] = zenu_df[col].astype(str).replace(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', regex=True)
                 zenu_df = zenu_df.replace(['nan', 'NaN', 'NAN', 'None', 'NONE', 'none', '<NA>', ''], np.nan)
             
-            # Per JSON instructions: DO NOT dropna for property_identifier! Let it export even if blank.
-                
             zenu_df = zenu_df.fillna('')
 
             output_file = os.path.join(self.engine.workspace, "zenu_property_notes.xlsx")
@@ -1804,3 +1803,205 @@ class EagleProcessor:
             self.engine.log(f"[{self.job_id}] SUCCESS: Cleaned and mapped {len(zenu_df)} Property Notes for Eagle.")
         except Exception as e:
             self.engine.log(f"[{self.job_id}] ERROR in Property Notes mapping: {e}")
+
+    # =========================================================================================
+    # NEW LOGIC: TASKS
+    # =========================================================================================
+    def process_tasks(self, rules):
+        self.engine.log(f"[{self.job_id}] Executing Eagle Transformation for Tasks...")
+        
+        base_file = "tasks.csv"
+        
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{base_file}';")
+            if not cursor.fetchone():
+                self.engine.log(f"[{self.job_id}] CRITICAL: '{base_file}' table missing. Cannot process Tasks.")
+                return
+
+            df = pd.read_sql_query(f'SELECT * FROM "{base_file}"', self.conn)
+
+            def safe_str(x):
+                if pd.isna(x) or str(x).strip().lower() == 'nan': return ''
+                s = str(x).strip()
+                return s[:-2] if s.endswith('.0') else s
+
+            def parse_au_date(date_series):
+                clean_str = date_series.astype(str).str.replace(r'\s*[+-]\d{2}:?\d{2}$', '', regex=True).str.split(' ').str[0].str.strip()
+                parsed = pd.to_datetime(clean_str, format='%d/%m/%Y', errors='coerce')
+                parsed = parsed.fillna(pd.to_datetime(clean_str, format='%Y-%m-%d', errors='coerce'))
+                parsed = parsed.fillna(pd.to_datetime(clean_str, errors='coerce', dayfirst=True))
+                return parsed
+
+            # Pre-fetch valid IDs for relational splits
+            valid_props = set()
+            cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='properties.csv';")
+            if cursor.fetchone():
+                valid_props = set(pd.read_sql_query('SELECT id FROM "properties.csv"', self.conn)['id'].apply(safe_str))
+                
+            valid_apprs = set()
+            cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='appraisals.csv';")
+            if cursor.fetchone():
+                valid_apprs = set(pd.read_sql_query('SELECT id FROM "appraisals.csv"', self.conn)['id'].apply(safe_str))
+
+            valid_addrs = set()
+            cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='addresses.csv';")
+            if cursor.fetchone():
+                valid_addrs = set(pd.read_sql_query('SELECT id FROM "addresses.csv"', self.conn)['id'].apply(safe_str))
+
+            self.engine.log(f"[{self.job_id}] Evaluating 1-to-Many task linkages across Properties, Appraisals, and Addresses...")
+            
+            expanded_rows = []
+            for _, row in df.iterrows():
+                rid = safe_str(row.get('id', ''))
+                pid = safe_str(row.get('property_id', ''))
+                appid = safe_str(row.get('appraisal_id', ''))
+                addid = safe_str(row.get('address_id', ''))
+
+                matched = False
+                if pid and pid in valid_props:
+                    new_row = row.copy()
+                    new_row['_task_identifier_override'] = f"{rid}_TP"
+                    new_row['_property_identifier_override'] = pid
+                    expanded_rows.append(new_row)
+                    matched = True
+                    
+                if appid and appid in valid_apprs:
+                    new_row = row.copy()
+                    new_row['_task_identifier_override'] = f"{rid}_TApp"
+                    new_row['_property_identifier_override'] = f"Appr_{appid}"
+                    expanded_rows.append(new_row)
+                    matched = True
+                    
+                if addid and addid in valid_addrs:
+                    new_row = row.copy()
+                    new_row['_task_identifier_override'] = f"{rid}_TPro"
+                    new_row['_property_identifier_override'] = f"Pr_{addid}"
+                    expanded_rows.append(new_row)
+                    matched = True
+                    
+                if not matched:
+                    new_row = row.copy()
+                    new_row['_task_identifier_override'] = f"{rid}_T"
+                    new_row['_property_identifier_override'] = ""
+                    expanded_rows.append(new_row)
+
+            if not expanded_rows:
+                df_expanded = pd.DataFrame(columns=df.columns.tolist() + ['_task_identifier_override', '_property_identifier_override'])
+            else:
+                df_expanded = pd.DataFrame(expanded_rows).reset_index(drop=True)
+
+            zenu_df = pd.DataFrame(index=df_expanded.index)
+
+            for rule in rules:
+                target_field = rule.get('targetField')
+                action = rule.get('action')
+                sources = rule.get('sources', [])
+                
+                primary_src_field = sources[0]['field'] if sources else None
+                safe_keys = df_expanded[primary_src_field].apply(safe_str) if primary_src_field and primary_src_field in df_expanded.columns else pd.Series(dtype=str)
+
+                # 1. Custom Override: Task Identifier
+                if target_field == 'task_identifier':
+                    zenu_df[target_field] = df_expanded['_task_identifier_override']
+                    continue
+
+                # 2. Custom Override: Property Identifier
+                if target_field == 'property_identifier':
+                    zenu_df[target_field] = df_expanded['_property_identifier_override']
+                    continue
+
+                # 3. Custom Override: Contact Identifier (First Split Only)
+                if target_field == 'contact_identifier' and primary_src_field in df_expanded.columns:
+                    try:
+                        cleaned_df = pd.read_sql_query('SELECT "Raw ORIG CONTACT_IDENTIFIER", "CONTACT_IDENTIFIER" FROM "contact_cleaned.csv"', self.conn)
+                        cleaned_df['Raw ORIG CONTACT_IDENTIFIER'] = cleaned_df['Raw ORIG CONTACT_IDENTIFIER'].apply(safe_str)
+                        cleaned_dict = cleaned_df.drop_duplicates(subset=['Raw ORIG CONTACT_IDENTIFIER'], keep='first').set_index('Raw ORIG CONTACT_IDENTIFIER')['CONTACT_IDENTIFIER'].to_dict()
+                        zenu_df[target_field] = safe_keys.map(cleaned_dict).fillna('')
+                    except Exception as e:
+                        self.engine.log(f"[{self.job_id}] Lookup error for {target_field}: {e}")
+                    continue
+
+                # 4. Custom Override: Task Subject
+                if target_field == 'task_subject':
+                    zenu_df[target_field] = "Task"
+                    continue
+
+                # 5. Custom Override: Task Status (Active/Completed)
+                if target_field == 'task_status' and primary_src_field in df_expanded.columns:
+                    has_completed = df_expanded[primary_src_field].notna() & (df_expanded[primary_src_field].apply(safe_str) != '')
+                    zenu_df[target_field] = np.where(has_completed, 'Completed', 'Active')
+                    continue
+
+                # 6. Custom Override: Task Date Due
+                if target_field == 'task_date_due' and primary_src_field in df_expanded.columns:
+                    raw_dates = parse_au_date(df_expanded[primary_src_field])
+                    zenu_df[target_field] = raw_dates.dt.strftime('%d/%m/%Y').fillna('')
+                    continue
+
+                # 7. Custom Override: Task Team Member
+                if target_field == 'task_team_member_1' and primary_src_field in df_expanded.columns:
+                    try:
+                        agents_df = pd.read_sql_query('SELECT user_id, name FROM "agents.csv"', self.conn)
+                        agents_df['user_id'] = agents_df['user_id'].apply(safe_str)
+                        agents_dict = agents_df.drop_duplicates(subset=['user_id'], keep='first').set_index('user_id')['name'].to_dict()
+                        
+                        zenu_df[target_field] = safe_keys.apply(
+                            lambda k: str(agents_dict.get(k, '')).strip() if k != '' else ''
+                        ).replace(['nan', 'NaN', 'None'], '')
+                    except Exception as e:
+                        self.engine.log(f"[{self.job_id}] Lookup error for {target_field}: {e}")
+                    continue
+
+                # Standard Actions
+                if action == 'direct':
+                    if primary_src_field and primary_src_field in df_expanded.columns:
+                        zenu_df[target_field] = df_expanded[primary_src_field].apply(safe_str)
+
+                elif action == 'static':
+                    zenu_df[target_field] = rule.get('valueExpression', '')
+
+                elif action == 'concat':
+                    if primary_src_field in df_expanded.columns:
+                        zenu_df[target_field] = df_expanded[primary_src_field].apply(safe_str)
+
+                elif action == 'lookup':
+                    lookup_configs = rule.get('lookupConfig', [])
+                    for config in lookup_configs:
+                        target_file = config.get('targetFile')
+                        match_key = config.get('matchKey')
+                        extract_fields = config.get('extractFields', [])
+                        
+                        if target_file and match_key and extract_fields:
+                            try:
+                                lookup_df = pd.read_sql_query(f'SELECT "{match_key}", "{extract_fields[0]}" FROM "{target_file}"', self.conn)
+                                lookup_df[match_key] = lookup_df[match_key].apply(safe_str)
+                                mapping_dict = lookup_df.drop_duplicates(subset=[match_key], keep='first').set_index(match_key)[extract_fields[0]].to_dict()
+                                zenu_df[target_field] = safe_keys.map(mapping_dict)
+                            except Exception as lookup_err:
+                                self.engine.log(f"[{self.job_id}] Lookup warning for {target_field}: {lookup_err}")
+
+            # ==========================================
+            # POST-PROCESSING & CLEANUP
+            # ==========================================
+            list_cols = [col for col in zenu_df.columns if zenu_df[col].apply(type).eq(list).any()]
+            for col in list_cols:
+                zenu_df = zenu_df.explode(col)
+
+            if not zenu_df.empty:
+                for col in zenu_df.columns:
+                    zenu_df[col] = zenu_df[col].astype(str).replace(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', regex=True)
+                zenu_df = zenu_df.replace(['nan', 'NaN', 'NAN', 'None', 'NONE', 'none', '<NA>', ''], np.nan)
+            
+            if 'task_identifier' in zenu_df.columns:
+                zenu_df = zenu_df.dropna(subset=['task_identifier'])
+                
+            zenu_df = zenu_df.fillna('')
+
+            output_file = os.path.join(self.engine.workspace, "zenu_tasks.xlsx")
+            zenu_df.to_excel(output_file, index=False, engine='openpyxl')
+            zenu_df.to_sql("zenu_tasks", self.conn, if_exists='replace', index=False)
+            
+            self.engine.log(f"[{self.job_id}] SUCCESS: Cleaned and mapped {len(zenu_df)} Tasks for Eagle.")
+        except Exception as e:
+            self.engine.log(f"[{self.job_id}] ERROR in Tasks mapping: {e}")
