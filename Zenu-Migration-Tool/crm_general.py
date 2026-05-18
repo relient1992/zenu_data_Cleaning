@@ -5,6 +5,68 @@ import re
 import numpy as np
 from collections import Counter
 
+def advanced_name_parser(val, target_field, split_mode="single_field"):
+    """
+    Parses messy name fields based on user-defined split rules and company detection.
+    
+    :param val: The raw string value from the CSV.
+    :param target_field: 'contact_first_name', 'contact_surname', or 'company_name'.
+    :param split_mode: 'single_field' (Full Name column) or 'dual_field' (First/Last already separated).
+    """
+    if pd.isna(val): return pd.NA
+    text = str(val).strip()
+    if not text or text.lower() in ['nan', 'none', 'null']: return pd.NA
+
+    # 1. COMPANY DETECTION (The "Smart Sniffer")
+    company_keywords = [
+        r'\bpty\b', r'\bltd\b', r'\bpty ltd\b', r'\binc\b', r'\bllc\b', 
+        r'\bcorp\b', r'\bcorporation\b', r'\btrust\b', r'\bgroup\b', 
+        r'\bholdings\b', r'\benterprises\b', r'\bproprietary\b', r'\blimited\b',
+        r'\bp/l\b'
+    ]
+    
+    is_company = any(re.search(kw, text.lower()) for kw in company_keywords)
+    
+    # If it's a company, but the target is a first/last name, we return Blank (or vice versa)
+    if is_company:
+        if target_field == 'company_name': return text.title()
+        return pd.NA # Don't put company names in first/last name columns
+    else:
+        if target_field == 'company_name': return pd.NA
+
+    # 2. HUMAN NAME PROCESSING
+    # Remove junk characters often found in names (but leave hyphens and ampersands)
+    text = re.sub(r'[0-9!@#$%^*()_+=\[\]{};:"\\|<>/]+', '', text)
+    
+    # Mode A: User mapped a SINGLE "Full Name" field
+    if split_mode == "single_field":
+        parts = text.split()
+        if len(parts) == 1:
+            return parts[0].title() if target_field == 'contact_first_name' else pd.NA
+            
+        # Handle couples (e.g., "John and Jane Doe" or "John & Jane Doe")
+        if '&' in text or ' and ' in text.lower():
+            if target_field == 'contact_first_name':
+                # Return everything except the last word (e.g., "John & Jane")
+                return " ".join(parts[:-1]).title()
+            else:
+                # Return the last word (e.g., "Doe")
+                return parts[-1].title()
+                
+        # Standard Full Name (e.g., "John Robert Smith")
+        else:
+            if target_field == 'contact_first_name':
+                return parts[0].title() # "John"
+            else:
+                return " ".join(parts[1:]).title() # "Robert Smith"
+
+    # Mode B: User mapped a field that is ALREADY "First Name" or "Last Name"
+    elif split_mode == "dual_field":
+        # In this mode, we mainly just clean it up without splitting. 
+        return text.title()
+
+    return text.title()
+
 class GeneralProcessor:
     def __init__(self, engine):
         self.engine = engine
@@ -32,7 +94,6 @@ class GeneralProcessor:
         
         # 2. Load the base data
         try:
-            # Check if table exists
             cursor = self.conn.cursor()
             cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{base_file}';")
             if not cursor.fetchone():
@@ -52,12 +113,21 @@ class GeneralProcessor:
             action = rule.get("action")
             sources = rule.get("sources", [])
             
+            # Look for a split rule in the JSON, default to "single_field" if not there
+            split_rule = rule.get("splitRule", "single_field")
+            
             primary_src_field = sources[0].get("field") if sources else None
 
             # --- DIRECT MAPPING ---
             if action == "direct":
                 if primary_src_field and primary_src_field in df.columns:
-                    zenu_output[target_field] = df[primary_src_field]
+                    # INTERCEPT NAME FIELDS
+                    if target_field in ['contact_first_name', 'contact_surname', 'company_name']:
+                        zenu_output[target_field] = df[primary_src_field].apply(
+                            lambda x: advanced_name_parser(x, target_field, split_rule)
+                        )
+                    else:
+                        zenu_output[target_field] = df[primary_src_field]
 
             # --- STATIC MAPPING ---
             elif action == "static":
@@ -77,7 +147,6 @@ class GeneralProcessor:
                         return res.strip()
                     zenu_output[target_field] = df.apply(eval_concat, axis=1)
                 else:
-                    # Fallback to direct if no expression provided
                     if primary_src_field in df.columns:
                         zenu_output[target_field] = df[primary_src_field]
 
@@ -94,7 +163,6 @@ class GeneralProcessor:
                             extract_col = extract_fields[0]
                             lookup_df = pd.read_sql_query(f'SELECT "{match_key}", "{extract_col}" FROM "{target_file}"', self.conn)
                             
-                            # Standardize types for matching
                             lookup_df[match_key] = lookup_df[match_key].astype(str).str.replace(r'\.0$', '', regex=True)
                             source_keys = df[primary_src_field].astype(str).str.replace(r'\.0$', '', regex=True)
                             
@@ -109,7 +177,6 @@ class GeneralProcessor:
             if pd.isna(val): return val
             text = str(val).strip()
             if text.lower() in ['nan', 'none', 'null', '']: return pd.NA
-            # Remove double spaces
             text = re.sub(r' +', ' ', text)
             return text
 
@@ -118,7 +185,7 @@ class GeneralProcessor:
 
         zenu_output = zenu_output.dropna(how='all')
 
-        # 5. Export to CSV (with chunking support)
+        # 5. Export to CSV
         safe_group_name = group_name.replace(" ", "_").replace("/", "_")
         chunk_limit = self.engine.chunk_size
         total_rows = len(zenu_output)

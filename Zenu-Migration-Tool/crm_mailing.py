@@ -11,6 +11,7 @@ class MailingProcessor(GeneralProcessor):
         self.engine.log(f"[{self.job_id}] Executing Mailing Address -> Prospect & Ownership Logic...")
         
         # 1. Run the standard JSON mapping processing first
+        # This generates a temporary CSV via GeneralProcessor
         super().process_group(group_name, rules)
         
         safe_group_name = group_name.replace(" ", "_").replace("/", "_")
@@ -18,17 +19,23 @@ class MailingProcessor(GeneralProcessor):
         
         if os.path.exists(base_output_path):
             try:
+                # Read the base output for further manipulation
                 df = pd.read_csv(base_output_path)
                 
                 # ---------------------------------------------------------
                 # 2. DATA CLEANING
-                # Remove non-meaningful values without applying global trims
+                # Remove non-meaningful values and fix pandas float formatting
                 # ---------------------------------------------------------
                 def clean_junk(val):
-                    if pd.isna(val): return val
+                    if pd.isna(val) or val is None: return ""
                     v_str = str(val)
-                    if v_str.upper() in ['N/A', 'NA', 'UNKNOWN']: 
+                    if v_str.upper() in ['N/A', 'NA', 'UNKNOWN', 'NAN', 'NONE']: 
                         return ''
+                    
+                    # Fix for pandas float conversion adding .0 to numeric fields like postcodes
+                    if v_str.endswith('.0'):
+                        v_str = v_str[:-2]
+                        
                     return v_str
                 
                 for col in df.columns:
@@ -47,8 +54,6 @@ class MailingProcessor(GeneralProcessor):
                 # 4. GRANULAR ADDRESS SPLITTING (6-Column Format)
                 # Parse address_line1 into Unit, Street Number, and Name
                 # ---------------------------------------------------------
-                # Because the JSON mapped address_line1 to property_street_name initially,
-                # we will read from it and overwrite the specific columns.
                 if 'property_street_name' in df.columns:
                     def parse_address(addr):
                         if pd.isna(addr) or addr == '': return "", "", ""
@@ -100,9 +105,12 @@ class MailingProcessor(GeneralProcessor):
 
                 df['property_full_address'] = df.apply(build_full_address, axis=1)
                 
-                # Save the updated Prospect file
-                df.to_csv(base_output_path, index=False)
-                self.engine.log(f"[{self.job_id}] SUCCESS: Updated Mailing Prospects -> {base_output_path}")
+                # ---------------------------------------------------------
+                # Export the updated Prospect file as XLSX
+                # ---------------------------------------------------------
+                final_prospect_path = os.path.join(self.workspace, f"Zenu_{safe_group_name}_Final.xlsx")
+                df.to_excel(final_prospect_path, index=False, engine='openpyxl')
+                self.engine.log(f"[{self.job_id}] SUCCESS: Updated Mailing Prospects -> {final_prospect_path}")
                 
                 # ---------------------------------------------------------
                 # 6. EXTRACT OWNERSHIP RELATIONSHIPS
@@ -117,15 +125,21 @@ class MailingProcessor(GeneralProcessor):
                     own_df['contact_identifier'] = df['property_identifier'].apply(
                         lambda x: str(x).replace("Mailing_to_add_", "") if pd.notna(x) else pd.NA
                     )
-                    own_df['contact_sale_type'] = "Owner" 
+                    own_df['contact_sale_type'] = "Seller" 
                     
-                    # Clean up and export
+                    # Clean up and export as XLSX
                     own_df = own_df.dropna(subset=['property_identifier', 'contact_identifier'])
                     own_df = own_df.drop_duplicates()
                     
-                    own_path = os.path.join(self.workspace, f"Ownership_Relations_{safe_group_name}.csv")
-                    own_df.to_csv(own_path, index=False)
+                    own_path = os.path.join(self.workspace, f"Ownership_Relations_{safe_group_name}.xlsx")
+                    own_df.to_excel(own_path, index=False, engine='openpyxl')
                     self.engine.log(f"[{self.job_id}] SUCCESS: Exported Ownerships -> {own_path}")
+
+                # Clean up the intermediate base CSV
+                try:
+                    os.remove(base_output_path)
+                except:
+                    pass
 
             except Exception as e:
                 self.engine.log(f"[{self.job_id}] Error generating Prospect/Ownership relations: {e}")
