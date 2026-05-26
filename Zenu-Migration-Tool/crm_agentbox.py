@@ -13,6 +13,138 @@ class AgentboxProcessor:
         self.workspace = engine.workspace
         self.log = engine.log
 
+
+    # ------------------------------------------------------------------
+    # STATIC HELPER METHODS (hoisted out of the rules loop)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _clean_id(x):
+        """Strip trailing .0 and whitespace from an ID string."""
+        if pd.isna(x):
+            return None
+        s = str(x).strip()
+        if s.lower() in ('nan', 'none', 'null', ''):
+            return None
+        return re.sub(r'\.0$', '', s)
+
+    @staticmethod
+    def _decode_b64(text):
+        """Decode a [base64]-prefixed string, or return as-is."""
+        try:
+            if pd.isna(text) or str(text).lower() in ('nan', 'none', 'null', ''):
+                return pd.NA
+            s = str(text).strip()
+            if s.startswith('[base64]'):
+                s = s.replace('[base64]', '')
+                s += '=' * ((4 - len(s) % 4) % 4)
+                return base64.b64decode(s).decode('utf-8', errors='ignore')
+            return s
+        except Exception:
+            return str(text)
+
+    @staticmethod
+    def _parse_date(d):
+        """Parse a date string to dd/mm/YYYY, returning pd.NA for bad/missing values."""
+        BAD_DATES = {
+            '0', '0.0', '', 'none', 'nan', 'null', 'nat',
+            '0000-00-00', '0000-00-00 00:00:00',
+            '1970-01-01', '1970-01-01 00:00:00',
+            '01/01/1970', '1/01/1970', '01-01-1970', '1-01-1970',
+        }
+        if pd.isna(d):
+            return pd.NA
+        d_str = str(d).strip().lower()
+        if d_str in BAD_DATES:
+            return pd.NA
+        d_clean = d_str.split()[0].replace('/', '-')
+        for fmt in ('%d-%m-%Y', '%Y-%m-%d', '%d-%m-%y', '%Y-%m-%y'):
+            try:
+                dt = pd.to_datetime(d_clean, format=fmt)
+                if dt.year == 1970:
+                    return pd.NA
+                return dt.strftime('%d/%m/%Y')
+            except ValueError:
+                continue
+        try:
+            dt = pd.to_datetime(d_str, dayfirst=True, errors='coerce')
+            if pd.isna(dt) or dt.year == 1970:
+                return pd.NA
+            return dt.strftime('%d/%m/%Y')
+        except Exception:
+            return pd.NA
+
+    @staticmethod
+    def _clean_val(v):
+        """Return a clean string, empty string for null/None/nan."""
+        if pd.isna(v) or v is None:
+            return ''
+        s = str(v).strip()
+        if s.lower() in ('nan', 'none', 'null', ''):
+            return ''
+        if s.endswith('.0'):
+            s = s[:-2]
+        return s
+
+    @staticmethod
+    def _format_address(row):
+        """Format a property address dict/Series into a single string."""
+        def cv(v):
+            if pd.isna(v) or v is None: return ''
+            s = str(v).strip()
+            if s.lower() in ('nan', 'none', 'null', ''): return ''
+            if s.endswith('.0'): s = s[:-2]
+            return s
+        unit = cv(row.get('unit_num'))
+        lot  = cv(row.get('lot_num'))
+        lvl  = cv(row.get('level_num'))
+        unit_parts = ' '.join(p for p in [lot, lvl, unit] if p)
+        st_num  = cv(row.get('street_num'))
+        st_name = cv(row.get('street_name'))
+        st_type = cv(row.get('street_type'))
+        suburb   = cv(row.get('suburb'))
+        state    = cv(row.get('state'))
+        postcode = cv(row.get('postcode'))
+        st_parts = []
+        if unit_parts and st_num:
+            st_parts.append(f'{unit_parts}/{st_num}')
+        elif unit_parts:
+            st_parts.append(unit_parts)
+        elif st_num:
+            st_parts.append(st_num)
+        if st_name: st_parts.append(st_name)
+        if st_type: st_parts.append(st_type)
+        street_address = ' '.join(st_parts).strip()
+        state_pc = ' '.join(p for p in [state, postcode] if p).strip()
+        final_parts = [p for p in [street_address, suburb, state_pc] if p]
+        return ', '.join(final_parts)
+
+
+    @staticmethod
+    def _build_unit(row):
+        parts = []
+        for c in ('lot_num', 'level_num', 'unit_num'):
+            v = row.get(c)
+            if pd.isna(v) or v is None:
+                continue
+            s = str(v).strip()
+            if s.lower() in ('nan', 'none', 'null', ''):
+                continue
+            if s.endswith('.0'):
+                s = s[:-2]
+            if s:
+                parts.append(s)
+        res = ' '.join(parts)
+        return res if res else pd.NA
+
+
+    @staticmethod
+    def _build_street_name(row):
+        parts = [str(row.get(c, '')).replace('nan', '').replace('None', '')
+                 for c in ('street_name', 'street_type')]
+        res = ' '.join(p.strip() for p in parts if p.strip() and p.lower() != 'none')
+        return res if res else pd.NA
+
     def process_group(self, group_name, rules):
         zenu_output = pd.DataFrame()
         
@@ -104,7 +236,8 @@ class AgentboxProcessor:
                         temp = pd.read_sql_query(f'SELECT listing_id, property_id FROM "{tbl}"', self.conn)
                         temp.columns = temp.columns.str.strip().str.lower()
                         list_dfs.append(temp)
-                    except: pass
+                    except Exception:
+                        pass
                     
                 if list_dfs:
                     all_listings = pd.concat(list_dfs).drop_duplicates()
@@ -145,7 +278,7 @@ class AgentboxProcessor:
         task_to_listing_map = {}
         task_to_agent_map = {}
 
-        if group_name in ["Contact_Notes", "Appraisal", "Prospect", "Prospect Owners", "Appraisal Owners", "Listing Vendor", "Listing Buyer", "Enquiry", "Inspection", "Task"] or group_name.lower() in ["property_notes(notelisting)", "property_notes(noteproperty)"]:
+        if group_name in ["Contact_Notes", "Appraisal", "Prospect", "Prospect Owners", "Appraisal Owners", "Listing Vendor", "Listing Buyer", "Enquiry", "Inspection", "Task", "Contact Relationship"] or group_name.lower() in ["property_notes(notelisting)", "property_notes(noteproperty)"]:
             try:
                 self.log(f"[{self.job_id}] Generating Dictionaries...")
                 
@@ -156,7 +289,8 @@ class AgentboxProcessor:
                         raw_c_df['cid_clean'] = raw_c_df['contact_id'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                         raw_c_df['full_name'] = raw_c_df.get('first_name', pd.Series(dtype=str)).fillna('') + ' ' + raw_c_df.get('last_name', pd.Series(dtype=str)).fillna('')
                         raw_contact_name_map = raw_c_df.set_index('cid_clean')['full_name'].str.strip().to_dict()
-                except: pass
+                except Exception:
+                    pass
 
                 clean_df = pd.read_sql_query('SELECT * FROM "contact_cleaned.csv"', self.conn)
                 match_col = 'Raw_ORIG_CONTACT_IDENTIFIER' if 'Raw_ORIG_CONTACT_IDENTIFIER' in clean_df.columns else 'Raw ORIG CONTACT_IDENTIFIER'
@@ -224,7 +358,8 @@ class AgentboxProcessor:
                         nxc['note_id_clean'] = nxc['note_id'].astype(str).str.replace(r'\.0$', '', regex=True)
                         nxc['contact_id_clean'] = nxc['contact_id'].astype(str).str.replace(r'\.0$', '', regex=True)
                         note_to_contact_map = nxc.drop_duplicates('note_id_clean').set_index('note_id_clean')['contact_id_clean'].to_dict()
-                except: pass
+                except Exception:
+                    pass
 
                 list_dfs = []
                 status_dfs = []
@@ -236,7 +371,8 @@ class AgentboxProcessor:
                             list_dfs.append(temp_df[['listing_id', 'property_id']])
                         if 'listing_id' in temp_df.columns and 'status' in temp_df.columns:
                             status_dfs.append(temp_df[['listing_id', 'status']])
-                    except: pass
+                    except Exception:
+                        pass
                 
                 all_listed_props = pd.DataFrame(columns=['property_id'])
                 if list_dfs:
@@ -642,18 +778,8 @@ class AgentboxProcessor:
                     
                 elif target_field in ["task_subject", "task_notes"]:
                     s1_col = str(sources[0].get("field")).strip().lower() if sources else ('headline' if target_field == 'task_subject' else 'description')
-                    def decode_b64(text):
-                        try:
-                            if pd.isna(text) or str(text).lower() in ['nan', 'none', 'null', '']: return pd.NA
-                            s = str(text).strip()
-                            if s.startswith('[base64]'): 
-                                s = s.replace('[base64]', '')
-                                s += "=" * ((4 - len(s) % 4) % 4)
-                                return base64.b64decode(s).decode('utf-8', errors='ignore')
-                            return s
-                        except: return str(text)
                     if s1_col in base_df.columns:
-                        zenu_output[target_field] = base_df[s1_col].apply(decode_b64)
+                        zenu_output[target_field] = base_df[s1_col].apply(self._decode_b64)
                     else:
                         zenu_output[target_field] = pd.NA
                     continue
@@ -697,31 +823,7 @@ class AgentboxProcessor:
                 elif target_field == "task_date_due":
                     s1_col = str(sources[0].get("field")).strip().lower() if sources else 'due_date'
                     if s1_col and s1_col in base_df.columns:
-                        def parse_strict_date(d):
-                            if pd.isna(d): return pd.NA
-                            d_str = str(d).strip().lower()
-                            bad_dates = ['0', '0.0', '', 'none', 'nan', 'null', 'nat', '0000-00-00', '0000-00-00 00:00:00', '1970-01-01', '1970-01-01 00:00:00', '01/01/1970', '1/01/1970', '01-01-1970', '1-01-1970']
-                            if d_str in bad_dates: return pd.NA
-                            
-                            d_str_date = d_str.split()[0].replace('/', '-')
-                            
-                            formats_to_try = ['%d-%m-%Y', '%Y-%m-%d', '%d-%m-%y', '%Y-%m-%y']
-                            for fmt in formats_to_try:
-                                try:
-                                    dt = pd.to_datetime(d_str_date, format=fmt)
-                                    if dt.year == 1970: return pd.NA
-                                    return dt.strftime('%d/%m/%Y')
-                                except ValueError:
-                                    continue
-                                    
-                            try:
-                                dt = pd.to_datetime(d_str, dayfirst=True, errors='coerce')
-                                if pd.isna(dt) or dt.year == 1970: return pd.NA
-                                return dt.strftime('%d/%m/%Y')
-                            except:
-                                return pd.NA
-
-                        zenu_output[target_field] = base_df[s1_col].apply(parse_strict_date)
+                        zenu_output[target_field] = base_df[s1_col].apply(self._parse_date)
                     else:
                         zenu_output[target_field] = pd.NA
                     continue
@@ -1140,78 +1242,21 @@ class AgentboxProcessor:
                     continue
 
                 elif target_field == "property_unit_number":
-                    def build_unit(row):
-                        parts = []
-                        for c in ['lot_num', 'level_num', 'unit_num']:
-                            v = row.get(c)
-                            if pd.isna(v) or v is None: continue
-                            s = str(v).strip()
-                            if s.lower() in ['nan', 'none', 'null', '']: continue
-                            if s.endswith('.0'): s = s[:-2]
-                            if s: parts.append(s)
-                        res = " ".join(parts)
-                        return res if res else pd.NA
-                    zenu_output[target_field] = base_df.apply(build_unit, axis=1)
+                    zenu_output[target_field] = base_df.apply(self._build_unit, axis=1)
                     continue
 
                 elif target_field == "property_street_name":
-                    def build_st_name(row):
-                        parts = [str(row.get(c, '')).replace('nan','').replace('None','') for c in ['street_name', 'street_type']]
-                        res = " ".join([p.strip() for p in parts if p.strip() and p.lower() != 'none'])
-                        return res if res else pd.NA
-                    zenu_output[target_field] = base_df.apply(build_st_name, axis=1)
+                    zenu_output[target_field] = base_df.apply(self._build_street_name, axis=1)
                     continue
 
                 elif target_field == "property_full_address":
-                    def format_prospect_address(row):
-                        def clean_val(v):
-                            if pd.isna(v) or v is None: return ""
-                            s = str(v).strip()
-                            if s.lower() in ['nan', 'none', 'null', '']: return ""
-                            if s.endswith('.0'): s = s[:-2]
-                            return s
-                        unit = clean_val(row.get('unit_num'))
-                        lot = clean_val(row.get('lot_num'))
-                        lvl = clean_val(row.get('level_num'))
-                        unit_parts = " ".join([p for p in [lot, lvl, unit] if p])
-                        st_num = clean_val(row.get('street_num'))
-                        st_name = clean_val(row.get('street_name'))
-                        st_type = clean_val(row.get('street_type'))
-                        suburb = clean_val(row.get('suburb'))
-                        state = clean_val(row.get('state'))
-                        postcode = clean_val(row.get('postcode'))
-                        
-                        st_parts = []
-                        if unit_parts and st_num: st_parts.append(f"{unit_parts}/{st_num}")
-                        elif unit_parts: st_parts.append(unit_parts)
-                        elif st_num: st_parts.append(st_num)
-                        if st_name: st_parts.append(st_name)
-                        if st_type: st_parts.append(st_type)
-                        street_address = " ".join(st_parts).strip()
-                        state_pc = " ".join([p for p in [state, postcode] if p]).strip()
-                        
-                        final_parts = []
-                        if street_address: final_parts.append(street_address)
-                        if suburb: final_parts.append(suburb)
-                        if state_pc: final_parts.append(state_pc)
-                        return ", ".join(final_parts)
-                    zenu_output[target_field] = base_df.apply(format_prospect_address, axis=1)
+                    zenu_output[target_field] = base_df.apply(self._format_address, axis=1)
                     continue
 
                 elif target_field == "property_notes":
                     s1_col = str(sources[0].get("field")).strip().lower() if sources else None
                     if s1_col and s1_col in base_df.columns:
-                        def decode_b64(text):
-                            try:
-                                if pd.isna(text) or str(text).lower() in ['nan', 'none', 'null', '']: return pd.NA
-                                s = str(text).strip()
-                                if s.startswith('[base64]'): 
-                                    s = s.replace('[base64]', '')
-                                    s += "=" * ((4 - len(s) % 4) % 4)
-                                    return base64.b64decode(s).decode('utf-8', errors='ignore')
-                                return s
-                            except: return str(text)
-                        zenu_output[target_field] = base_df[s1_col].apply(decode_b64)
+                        zenu_output[target_field] = base_df[s1_col].apply(self._decode_b64)
                     else:
                         zenu_output[target_field] = pd.NA
                     continue
@@ -1268,85 +1313,23 @@ class AgentboxProcessor:
                     continue
                 
                 elif target_field == "property_unit_number":
-                    def build_unit(row):
-                        parts = []
-                        for c in ['lot_num', 'level_num', 'unit_num']:
-                            v = row.get(c)
-                            if pd.isna(v) or v is None: continue
-                            s = str(v).strip()
-                            if s.lower() in ['nan', 'none', 'null', '']: continue
-                            if s.endswith('.0'): s = s[:-2]
-                            if s: parts.append(s)
-                        res = " ".join(parts)
-                        return res if res else pd.NA
-                    zenu_output[target_field] = base_df.apply(build_unit, axis=1)
+                    zenu_output[target_field] = base_df.apply(self._build_unit, axis=1)
                     continue
 
                 elif target_field == "property_street_name":
-                    def build_st_name(row):
-                        parts = [str(row.get(c, '')).replace('nan','').replace('None','') for c in ['street_name', 'street_type']]
-                        res = " ".join([p.strip() for p in parts if p.strip() and p.lower() != 'none'])
-                        return res if res else pd.NA
-                    zenu_output[target_field] = base_df.apply(build_st_name, axis=1)
+                    zenu_output[target_field] = base_df.apply(self._build_street_name, axis=1)
                     continue
 
                 elif target_field == "property_notes":
                     s1_col = str(sources[0].get("field")).strip().lower() if sources else None
                     if s1_col and s1_col in base_df.columns:
-                        def decode_b64(text):
-                            try:
-                                if pd.isna(text) or str(text).lower() in ['nan', 'none', 'null', '']: return pd.NA
-                                s = str(text).strip()
-                                if s.startswith('[base64]'): 
-                                    s = s.replace('[base64]', '')
-                                    s += "=" * ((4 - len(s) % 4) % 4)
-                                    return base64.b64decode(s).decode('utf-8', errors='ignore')
-                                return s
-                            except: return str(text)
-                        zenu_output[target_field] = base_df[s1_col].apply(decode_b64)
+                        zenu_output[target_field] = base_df[s1_col].apply(self._decode_b64)
                     else:
                         zenu_output[target_field] = pd.NA
                     continue
 
                 elif target_field == "property_full_address":
-                    def format_appraisal_address(row):
-                        def clean_val(v):
-                            if pd.isna(v) or v is None: return ""
-                            s = str(v).strip()
-                            if s.lower() in ['nan', 'none', 'null', '']: return ""
-                            if s.endswith('.0'): s = s[:-2]
-                            return s
-
-                        unit = clean_val(row.get('unit_num'))
-                        lot = clean_val(row.get('lot_num'))
-                        lvl = clean_val(row.get('level_num'))
-                        
-                        unit_parts = " ".join([p for p in [lot, lvl, unit] if p])
-                        st_num = clean_val(row.get('street_num'))
-                        st_name = clean_val(row.get('street_name'))
-                        st_type = clean_val(row.get('street_type'))
-                        suburb = clean_val(row.get('suburb'))
-                        state = clean_val(row.get('state'))
-                        postcode = clean_val(row.get('postcode'))
-                        
-                        st_parts = []
-                        if unit_parts and st_num: st_parts.append(f"{unit_parts}/{st_num}")
-                        elif unit_parts: st_parts.append(unit_parts)
-                        elif st_num: st_parts.append(st_num)
-                        
-                        if st_name: st_parts.append(st_name)
-                        if st_type: st_parts.append(st_type)
-                        street_address = " ".join(st_parts).strip()
-                        
-                        state_pc = " ".join([p for p in [state, postcode] if p]).strip()
-                        
-                        final_parts = []
-                        if street_address: final_parts.append(street_address)
-                        if suburb: final_parts.append(suburb)
-                        if state_pc: final_parts.append(state_pc)
-                        
-                        return ", ".join(final_parts)
-                    zenu_output[target_field] = base_df.apply(format_appraisal_address, axis=1)
+                    zenu_output[target_field] = base_df.apply(self._format_address, axis=1)
                     continue
 
                 elif action == "lookup" and rule.get("lookupConfig") and rule["lookupConfig"][0]["targetFile"] == "property.csv":
@@ -1427,7 +1410,9 @@ class AgentboxProcessor:
                     continue
 
             elif group_name == "Contact Relationship":
-                if contact_cleaned_mapping is None:
+                # NOTE: contact_cleaned_mapping is populated via the main dictionary block above
+                # (group now included in that block's condition). This fallback is a safety net only.
+                if not contact_cleaned_mapping:
                     try:
                         cursor = self.conn.cursor()
                         cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
@@ -1436,20 +1421,29 @@ class AgentboxProcessor:
                         if clean_file:
                             clean_df = pd.read_sql_query(f'SELECT * FROM "{clean_file}"', self.conn)
                             match_col = 'Raw_ORIG_CONTACT_IDENTIFIER' if 'Raw_ORIG_CONTACT_IDENTIFIER' in clean_df.columns else 'Raw ORIG CONTACT_IDENTIFIER'
-                            clean_df = clean_df.drop_duplicates(subset=[match_col])
-                            contact_cleaned_mapping = clean_df.set_index(match_col)['CONTACT_IDENTIFIER'].to_dict()
-                        else: contact_cleaned_mapping = {}
-                    except Exception: contact_cleaned_mapping = {}
+                            clean_df[match_col] = clean_df[match_col].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                            # Only map primary contacts (same logic as main block)
+                            primary_mask = clean_df['CONTACT_IDENTIFIER'].astype(str).str.contains(r'_c1$|_c$', regex=True)
+                            clean_df_primary = clean_df[primary_mask].drop_duplicates(subset=[match_col])
+                            contact_cleaned_mapping = clean_df_primary.set_index(match_col)['CONTACT_IDENTIFIER'].to_dict()
+                        else:
+                            contact_cleaned_mapping = {}
+                    except Exception as e:
+                        self.log(f"[{self.job_id}] Warning: Could not build Contact Relationship mapping: {e}")
+                        contact_cleaned_mapping = {}
 
                 if target_field in ["contact_identifier", "contact_partner_identifier"] and len(sources) > 0:
                     s1_col = str(sources[0].get("field")).strip().lower()
-                    zenu_output[target_field] = base_df.get(s1_col).map(contact_cleaned_mapping)
+                    clean_ids = base_df.get(s1_col, pd.Series(dtype=object)).astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                    zenu_output[target_field] = clean_ids.map(contact_cleaned_mapping)
                     continue
                 elif target_field == "contact_partnership_id" and len(sources) >= 2:
                     s1_col = str(sources[0].get("field")).strip().lower()
                     s2_col = str(sources[1].get("field")).strip().lower()
-                    c1 = base_df.get(s1_col).map(contact_cleaned_mapping).astype(str)
-                    c2 = base_df.get(s2_col).map(contact_cleaned_mapping).astype(str)
+                    c1_ids = base_df.get(s1_col, pd.Series(dtype=object)).astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                    c2_ids = base_df.get(s2_col, pd.Series(dtype=object)).astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                    c1 = c1_ids.map(contact_cleaned_mapping).astype(str)
+                    c2 = c2_ids.map(contact_cleaned_mapping).astype(str)
                     valid_mask = (c1 != 'nan') & (c2 != 'nan') & c1.notna() & c2.notna()
                     zenu_output[target_field] = pd.Series(pd.NA, index=base_df.index)
                     zenu_output.loc[valid_mask, target_field] = c1[valid_mask] + "_" + c2[valid_mask] + "_r"
@@ -1457,9 +1451,14 @@ class AgentboxProcessor:
                 elif target_field == "contact_partnership_type" and len(sources) > 0:
                     s1_col = str(sources[0].get("field")).strip().lower()
                     allowed_types = ["Aunt", "Brother", "Business Partner", "Co-Owner", "Colleague", "Cousin", "Daughter", "Daughter-In-Law", "De Facto", "Deceased", "Ex-Partner", "Executor Of Will", "Father", "Father-In-Law", "Friend", "Granddaughter", "Grandfather", "Grandmother", "Grandson", "Husband", "Mother", "Mother-In-Law", "Nephew", "Niece", "Other", "Other Relative", "Partner", "Power Of Attorney", "Principal", "Sister", "Son", "Son-In-Law", "Uncle", "Wife"]
-                    raw_val = base_df.get(s1_col).astype(str).str.strip().str.title()
-                    raw_val = raw_val.replace('Spouse', 'Partner')
+                    raw_val = base_df.get(s1_col, pd.Series(dtype=object)).astype(str).str.strip().str.title()
+                    # Fix: Series.replace() is exact-match only; use str.replace() for proper substitution
+                    raw_val = raw_val.str.replace(r'^Spouse$', 'Partner', regex=True)
                     zenu_output[target_field] = raw_val.where(raw_val.isin(allowed_types), 'Other')
+                    continue
+                else:
+                    # Unhandled target_field for Contact Relationship — prevent fallthrough to generic actions
+                    zenu_output[target_field] = pd.NA
                     continue
 
             # --- GENERIC ACTIONS ---
@@ -1484,7 +1483,7 @@ class AgentboxProcessor:
                     target_df.columns = target_df.columns.str.strip().str.lower()
                     if match_key in target_df.columns and extract_col in target_df.columns:
                         mapping_dict = target_df.drop_duplicates(subset=[match_key]).set_index(match_key)[extract_col].to_dict()
-                        zenu_output[target_field] = base_df.get(s1_field).map(mapping_dict)
+                        zenu_output[target_field] = base_df.get(s1_field, pd.Series(dtype=object)).map(mapping_dict)
                     else:
                         zenu_output[target_field] = pd.NA
                 except Exception: zenu_output[target_field] = pd.NA
@@ -1556,11 +1555,11 @@ class AgentboxProcessor:
                 
                 if not chunk_df.empty:
                     # Append _pt1, _pt2, etc. to the filename
-                    output_path = os.path.join(self.workspace, f"Zenu_{safe_group_name}_Final_pt{i+1}.csv")
-                    chunk_df.to_csv(output_path, index=False)
+                    output_path = os.path.join(self.workspace, f"Zenu_{safe_group_name}_Final_pt{i+1}.xlsx")
+                    chunk_df.to_excel(output_path, index=False, engine='openpyxl')
                     self.log(f"[{self.job_id}] SUCCESS: Created {output_path} ({len(chunk_df)} rows)")
         else:
             # If under the limit, just export normally
-            output_path = os.path.join(self.workspace, f"Zenu_{safe_group_name}_Final.csv")
-            zenu_output.to_csv(output_path, index=False)
+            output_path = os.path.join(self.workspace, f"Zenu_{safe_group_name}_Final.xlsx")
+            zenu_output.to_excel(output_path, index=False, engine='openpyxl')
             self.log(f"[{self.job_id}] SUCCESS: Created {output_path}")

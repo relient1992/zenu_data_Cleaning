@@ -8,6 +8,7 @@ from crm_agentbox import AgentboxProcessor
 from crm_eagle import EagleProcessor
 from crm_general import GeneralProcessor
 from crm_mailing import MailingProcessor
+from crm_vaultre import VaultREProcessor
 
 class MigrationEngine:
     def __init__(self, job_id, workspace, source_crm="Agentbox", chunk_size=500000):
@@ -82,13 +83,12 @@ class MigrationEngine:
             processor = AgentboxProcessor(self)
         elif self.source_crm == "Eagle":
             processor = EagleProcessor(self)
+        elif self.source_crm == "VaultRE":
+            processor = VaultREProcessor(self)
         elif self.source_crm == "General":
             processor = GeneralProcessor(self)
         elif self.source_crm == "MailingProspect":
             processor = MailingProcessor(self)
-        elif self.source_crm == "VaultRE":
-            self.log(f"[{self.job_id}] VaultRE logic not yet implemented.")
-            return
         elif self.source_crm == "Rex":
             self.log(f"[{self.job_id}] Rex logic not yet implemented.")
             return

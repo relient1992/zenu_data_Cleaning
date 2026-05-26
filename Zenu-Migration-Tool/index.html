@@ -162,6 +162,12 @@
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 inline mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
                         Duplicate
                     </button>
+
+                    <button type="button" onclick="deleteCurrentGroup()" class="bg-red-900/20 hover:bg-red-800/40 text-red-400 border border-red-500/30 px-3 py-2 rounded text-sm font-medium transition-colors" title="Delete current matrix">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 inline mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                        Delete
+                    </button>
+
                     <button type="button" onclick="createNewGroup()" class="bg-cyan-900/30 hover:bg-cyan-800/50 text-cyan-400 border border-cyan-500/30 px-3 py-2 rounded text-sm font-medium transition-colors">
                         + New Matrix
                     </button>
@@ -721,6 +727,34 @@
                 renderTargetFields();
             } else if (mappings[groupName]) {
                 showNotification("Duplicate Designation", "A Matrix with this name already exists in the registry.", "warning");
+            }
+        }
+
+        function deleteCurrentGroup() {
+            const currentGroup = mappingGroupSelect.value;
+            if (!currentGroup) return;
+
+            // Prevent deleting the very last matrix
+            if (Object.keys(mappings).length <= 1) {
+                showNotification("Action Denied", "You cannot delete the only remaining Matrix. Create a new one first.", "error");
+                return;
+            }
+
+            // Confirm deletion with the user
+            if (confirm(`Are you sure you want to delete the matrix "${currentGroup}"? All mapped nodes inside it will be permanently lost.`)) {
+                // Remove from the object
+                delete mappings[currentGroup];
+                
+                // Grab the next available group to display
+                const remainingGroups = Object.keys(mappings);
+                const nextGroup = remainingGroups[0];
+                
+                // Refresh the UI
+                updateGroupDropdown(nextGroup);
+                renderMappingTable();
+                renderTargetFields();
+                
+                showNotification("Matrix Terminated", `Successfully deleted "${currentGroup}".`, "success");
             }
         }
 

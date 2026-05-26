@@ -43,11 +43,11 @@ class MailingProcessor(GeneralProcessor):
                     
                 # ---------------------------------------------------------
                 # 3. IDENTIFIER FORMATTING
-                # Append the 'Mailing_to_add_' prefix to the raw contact ID
+                # Append the 'Mailing_to_pros_' prefix to the raw contact ID
                 # ---------------------------------------------------------
                 if 'property_identifier' in df.columns:
                     df['property_identifier'] = df['property_identifier'].apply(
-                        lambda x: f"Mailing_to_add_{x}" if pd.notna(x) and str(x) != '' else pd.NA
+                        lambda x: f"Mailing_to_prospect_{x}" if pd.notna(x) and str(x) != '' else pd.NA
                     )
                     
                 # ---------------------------------------------------------
@@ -123,7 +123,7 @@ class MailingProcessor(GeneralProcessor):
                     
                     # Reverse-engineer the contact_id from the property_identifier
                     own_df['contact_identifier'] = df['property_identifier'].apply(
-                        lambda x: str(x).replace("Mailing_to_add_", "") if pd.notna(x) else pd.NA
+                        lambda x: str(x).replace("Mailing_to_prospect_", "") if pd.notna(x) else pd.NA
                     )
                     own_df['contact_sale_type'] = "Seller" 
                     
