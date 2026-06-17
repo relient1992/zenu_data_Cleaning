@@ -9,6 +9,7 @@ from crm_eagle import EagleProcessor
 from crm_general import GeneralProcessor
 from crm_mailing import MailingProcessor
 from crm_vaultre import VaultREProcessor
+from crm_zenu import ZenuProcessor
 
 class MigrationEngine:
     def __init__(self, job_id, workspace, source_crm="Agentbox", chunk_size=500000):
@@ -89,6 +90,8 @@ class MigrationEngine:
             processor = GeneralProcessor(self)
         elif self.source_crm == "MailingProspect":
             processor = MailingProcessor(self)
+        elif self.source_crm == "ZenuTransfer": 
+            processor = ZenuProcessor(self)
         elif self.source_crm == "Rex":
             self.log(f"[{self.job_id}] Rex logic not yet implemented.")
             return

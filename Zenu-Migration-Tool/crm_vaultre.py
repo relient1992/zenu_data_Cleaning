@@ -1336,18 +1336,40 @@ class VaultREProcessor:
         # PROPERTY NOTES LOGIC
         # ---------------------------------------------------------
         elif group_name in ["Property Notes", "PropertyNote"]:
+            # Explode base_df using PropertyLifeHistory to match AllProperties multiple rows per PropertyID
             try:
-                plh_df = pd.read_sql_query('SELECT propertyid, salelifeid, leaselifeid FROM "PropertyLifeHistory.csv"', self.conn)
+                plh_df = pd.read_sql_query('SELECT * FROM "PropertyLifeHistory.csv"', self.conn)
                 plh_df.columns = plh_df.columns.str.strip().str.lower()
-                prop_to_life = {}
-                for _, row in plh_df.iterrows():
-                    pid = str(row['propertyid']).replace('.0', '').strip()
-                    if pid and pid != 'nan':
-                        sid = str(row.get('salelifeid', '')).replace('.0', '').strip()
-                        lid = str(row.get('leaselifeid', '')).replace('.0', '').strip()
-                        prop_to_life[pid] = (sid if sid != 'nan' else None, lid if lid != 'nan' else None)
-            except:
-                prop_to_life = {}
+                
+                if 'salelifeid' in plh_df.columns and 'leaselifeid' in plh_df.columns and 'propertyid' in plh_df.columns:
+                    sale_mask = plh_df['salelifeid'].notna() & (plh_df['salelifeid'].astype(str).str.strip() != '') & (plh_df['salelifeid'].astype(str).str.strip().str.lower() != 'nan')
+                    lease_mask = plh_df['leaselifeid'].notna() & (plh_df['leaselifeid'].astype(str).str.strip() != '') & (plh_df['leaselifeid'].astype(str).str.strip().str.lower() != 'nan')
+                    
+                    sale_plh = plh_df[sale_mask].copy()
+                    sale_plh['active_life_id'] = sale_plh['salelifeid'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                    sale_plh['life_type'] = 'Sale'
+                    
+                    lease_plh = plh_df[lease_mask].copy()
+                    lease_plh['active_life_id'] = lease_plh['leaselifeid'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                    lease_plh['life_type'] = 'Lease'
+                    
+                    neither_mask = ~sale_mask & ~lease_mask
+                    prop_plh = plh_df[neither_mask].copy()
+                    prop_plh['active_life_id'] = pd.NA
+                    prop_plh['life_type'] = 'Prospect_Only'
+                    
+                    expanded_plh = pd.concat([sale_plh, lease_plh, prop_plh], ignore_index=True)
+                    expanded_plh['propertyid_clean'] = expanded_plh['propertyid'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                    
+                    # Deduplicate to prevent massive explosion if PLH has dupes, we only want unique life states per property
+                    expanded_plh = expanded_plh.drop_duplicates(subset=['propertyid_clean', 'active_life_id', 'life_type'])
+                    
+                    if 'propertyid' in base_df.columns:
+                        base_df['propertyid_clean'] = base_df['propertyid'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                        # Inner join to duplicate Property Notes for each distinct life instance
+                        base_df = pd.merge(base_df, expanded_plh[['propertyid_clean', 'active_life_id', 'life_type']], on='propertyid_clean', how='inner')
+            except Exception as e:
+                self.log(f"[{self.job_id}] Warning: Error exploding Property Notes against PropertyLifeHistory: {e}")
 
             def get_life_val(active_id, life_type, col_name):
                 if pd.isna(active_id): return pd.NA
@@ -1379,22 +1401,13 @@ class VaultREProcessor:
                         zenu_output[target_field] = pd.NA
                         
                 elif target_field == "property_identifier":
-                    def get_formatted_prop_id_from_pid(pid):
-                        if pd.isna(pid): return pd.NA
-                        pid_clean = str(pid).replace('.0', '').strip()
-                        if pid_clean not in prop_to_life:
-                            return f"Pr_{pid_clean}"
+                    def get_formatted_prop_id_from_exploded(row):
+                        pid = str(row.get('propertyid', '')).replace('.0', '').strip()
+                        life_id = row.get('active_life_id')
+                        life_type = row.get('life_type')
                         
-                        sid, lid = prop_to_life[pid_clean]
-                        life_id = None
-                        life_type = None
-                        if sid:
-                            life_id, life_type = sid, 'Sale'
-                        elif lid:
-                            life_id, life_type = lid, 'Lease'
-                        
-                        if not life_id:
-                            return f"Pr_{pid_clean}"
+                        if pd.isna(life_id) or str(life_id).strip().lower() == 'nan':
+                            return f"Pr_{pid}" if pid and pid.lower() != 'nan' else pd.NA
                             
                         status = str(get_life_val(life_id, life_type, 'status')).strip().lower()
                         if status in ['prospect', 'not currently listed', 'prospect/not currently listed', 'nan', 'none', '']:
@@ -1402,10 +1415,16 @@ class VaultREProcessor:
                         elif status == 'appraisal':
                             return f"Appr_{life_id}"
                         else:
-                            return life_id
+                            return str(life_id)
                             
-                    if 'propertyid' in base_df.columns: zenu_output[target_field] = base_df['propertyid'].apply(get_formatted_prop_id_from_pid)
-                    else: zenu_output[target_field] = pd.NA
+                    if 'propertyid' in base_df.columns and 'active_life_id' in base_df.columns: 
+                        zenu_output[target_field] = base_df.apply(get_formatted_prop_id_from_exploded, axis=1)
+                    else: 
+                        # Fallback if merge failed
+                        def fb_format(pid):
+                            pid_c = str(pid).replace('.0', '').strip()
+                            return f"Pr_{pid_c}" if pid_c and pid_c.lower() != 'nan' else pd.NA
+                        zenu_output[target_field] = base_df.get('propertyid', pd.Series([pd.NA]*len(base_df))).apply(fb_format)
 
                 elif target_field == "property_note_created_date":
                     if 'insertdate' in base_df.columns:
@@ -1429,27 +1448,18 @@ class VaultREProcessor:
                     else: zenu_output[target_field] = pd.NA
 
                 elif target_field == "Status":
-                    def get_status_from_pid(pid):
-                        if pd.isna(pid): return pd.NA
-                        pid_clean = str(pid).replace('.0', '').strip()
-                        if pid_clean not in prop_to_life:
-                            return pd.NA
-                        
-                        sid, lid = prop_to_life[pid_clean]
-                        life_id = None
-                        life_type = None
-                        if sid:
-                            life_id, life_type = sid, 'Sale'
-                        elif lid:
-                            life_id, life_type = lid, 'Lease'
-                        
-                        if not life_id: return pd.NA
+                    def get_status_from_exploded(row):
+                        life_id = row.get('active_life_id')
+                        life_type = row.get('life_type')
+                        if pd.isna(life_id) or str(life_id).strip().lower() == 'nan': return pd.NA
                         
                         s_val = get_life_val(life_id, life_type, 'status')
                         return s_val if pd.notna(s_val) else pd.NA
                         
-                    if 'propertyid' in base_df.columns: zenu_output[target_field] = base_df['propertyid'].apply(get_status_from_pid)
-                    else: zenu_output[target_field] = pd.NA
+                    if 'active_life_id' in base_df.columns: 
+                        zenu_output[target_field] = base_df.apply(get_status_from_exploded, axis=1)
+                    else: 
+                        zenu_output[target_field] = pd.NA
 
         else:
             # ---------------------------------------------------------
