@@ -2,6 +2,7 @@ import pandas as pd
 import sqlite3
 import os
 import re
+import sys
 import numpy as np
 from collections import Counter
 
@@ -10,7 +11,7 @@ from collections import Counter
 # ---------------------------------------------------------------------------
 
 _COUPLE_PATTERN = re.compile(
-    r'\band\b|\s*&\s*',
+    r'\band\b|\s*&\s*|\s*/\s*|\s*,\s*',
     flags=re.IGNORECASE
 )
 
@@ -52,6 +53,142 @@ def _split_couple_firstnames(name_val: str) -> list[str]:
     return [n for n in result if n]
 
 
+def _extract_shared_surname(name_val: str):
+    """For a single-field couple like 'John and Jane Smith', pull the trailing
+    surname ('Smith') that should be shared by both partners. Returns pd.NA if
+    the field carries only first names (e.g. 'John and Jane')."""
+    parts = _COUPLE_PATTERN.split(str(name_val))
+    parts = [p.strip() for p in parts if p.strip()]
+    if not parts:
+        return pd.NA
+    last_tokens = parts[-1].split()
+    if len(last_tokens) >= 2:
+        return _clean_name_text(" ".join(last_tokens[1:]))
+    return pd.NA
+
+
+# ---------------------------------------------------------------------------
+# SINGLE-FIELD NAME SPLITTER  (ported from the legacy VB / EPPlus routine)
+# ---------------------------------------------------------------------------
+
+# Business / trust indicators meaning "this is not a person" -> do not split.
+# " The " is matched case-sensitively (as in the VB Regex "The\s") so it catches
+# trust names like "The Smith Family Trust" without tripping on a lowercase
+# 'the' inside an ordinary name. The remaining keywords are matched
+# case-insensitively (the VB version compared a few of these against a
+# lower-cased string with capitalised needles, so they never actually fired -
+# here they all work as intended).
+_VB_THE_PATTERN = re.compile(r"The\s")
+_VB_SKIP_KEYWORDS = (
+    " pty ltd", " pty limited", " trustee", " accounts ",
+    " corporation", " development", " conveyancing",
+)
+
+
+def _normalize_name_separators(text: str) -> str:
+    """Replicate the VB string-cleanup chain: turn every couple separator
+    (&, ;, +, comma, ' And ') into a single lower-case ' and ' and strip dots.
+    The order of replacements matches the original exactly."""
+    text = str(text)
+    text = text.replace(" & ", " and ")
+    text = text.replace(";", " and ")
+    text = text.replace(" And ", " and ")
+    text = text.replace(" + ", " and ")
+    text = text.replace(" . ", "")
+    text = text.replace(".", " ")
+    text = text.replace(". ", "")
+    text = text.replace(", ", " and ")
+    text = text.replace(",", " and ")    # bare comma: 'Adelle,Paul Rogers'
+    text = text.replace("/", " and ")    # slash:      'Chris / Caroline ...'
+    text = text.replace(" &", " and ")
+    text = text.replace("& ", " and ")
+    text = text.replace("- ", "-")
+    return text
+
+
+def _vb_should_skip(cell: str) -> bool:
+    """True when the (already-normalized) name looks like a company / trust /
+    business and should NOT be split into first + surname."""
+    if _VB_THE_PATTERN.search(cell):
+        return True
+    low = cell.lower()
+    return any(kw in low for kw in _VB_SKIP_KEYWORDS)
+
+
+def split_single_field_name(name_value, surname_value=None):
+    """Port of the legacy VB single-field name splitter.
+
+    Returns (is_person, people):
+      * is_person is False for company / trust rows (caller routes to company_name)
+      * people is a list of {"first": <str|NA>, "surname": <str|NA>} dicts,
+        one per person (1 for a single, 2+ for a couple).
+
+    Faithful to the VB rules:
+      * separators &, ;, +, comma and ' And ' all collapse to ' and '
+      * the field is split on ' and ' into individual people
+      * an optional surname-column value is appended to every person
+      * per person: first name = everything before the LAST space,
+        surname = the LAST token
+      * a person with no surname inherits the surname of the next person who
+        has one (couples sharing a family name)
+    """
+    if pd.isna(name_value):
+        return True, []
+
+    cell = _normalize_name_separators(str(name_value))
+    cell = re.sub(r" +", " ", cell).strip()
+    if not cell or cell.lower() in ("nan", "none", "null"):
+        return True, []
+
+    if _vb_should_skip(cell):
+        return False, []
+
+    surname_extra = ""
+    if surname_value is not None and not pd.isna(surname_value):
+        surname_extra = re.sub(r" +", " ", str(surname_value)).strip()
+        if surname_extra.lower() in ("nan", "none", "null"):
+            surname_extra = ""
+
+    parts = [p.strip() for p in cell.split(" and ") if p.strip()]
+
+    people = []
+    for part in parts:
+        # Pull any leading title (Mr/Mrs/Ms/Miss/Dr...) off the NAME portion
+        # only; the surname column is appended afterwards.
+        tokens = part.split()
+        title, tokens = _extract_title_from_tokens(tokens)
+        part_wo_title = " ".join(tokens).strip()
+
+        full = (f"{part_wo_title} {surname_extra}".strip()
+                if surname_extra else part_wo_title)
+
+        if not full:
+            # The name held nothing but a title (e.g. "Mr").
+            people.append({"title": title, "first": pd.NA, "surname": pd.NA})
+        elif " " not in full:
+            # Single token -> first name only; surname filled by inheritance.
+            people.append({"title": title,
+                           "first": _clean_name_text(full), "surname": pd.NA})
+        else:
+            cut = full.rfind(" ")
+            people.append({
+                "title":   title,
+                "first":   _clean_name_text(full[:cut].strip()),
+                "surname": _clean_name_text(full[cut + 1:].strip()),
+            })
+
+    # Inherit a missing surname from the next person who has one.
+    n = len(people)
+    for i in range(n):
+        if pd.isna(people[i]["surname"]):
+            for j in range(i + 1, n):
+                if not pd.isna(people[j]["surname"]):
+                    people[i]["surname"] = people[j]["surname"]
+                    break
+
+    return True, people
+
+
 def _split_couple_titles(title_val, n_people: int) -> list:
     """Split a title cell into exactly n_people title values."""
     if pd.isna(title_val):
@@ -74,6 +211,95 @@ def _split_couple_titles(title_val, n_people: int) -> list:
     while len(result) < n_people:
         result.append(result[0])
     return result
+
+
+# ---------------------------------------------------------------------------
+# TITLE EXTRACTION  (pull Mr / Mrs / Ms / Miss / Dr ... out of name fields)
+# ---------------------------------------------------------------------------
+
+# Maps a recognised title (lower-case, dots/spaces stripped) to its canonical
+# display form. Extend this freely if more titles show up in the data.
+_TITLE_LOOKUP = {
+    "mr": "Mr", "mister": "Mr",
+    "mrs": "Mrs",
+    "ms": "Ms",
+    "miss": "Miss",
+    "dr": "Dr", "doctor": "Dr",
+    "prof": "Prof", "professor": "Prof",
+    "sir": "Sir",
+    "mx": "Mx",
+    "master": "Master",
+    "madam": "Madam", "madame": "Madam",
+    "rev": "Rev", "reverend": "Rev",
+    "hon": "Hon",
+    "lady": "Lady",
+}
+
+
+def _extract_title_from_tokens(tokens: list):
+    """Pull a single leading title token off a token list.
+    Returns (canonical_title_or_None, remaining_tokens)."""
+    if not tokens:
+        return None, tokens
+    key = tokens[0].strip().strip(".").lower()
+    if key in _TITLE_LOOKUP:
+        return _TITLE_LOOKUP[key], tokens[1:]
+    return None, tokens
+
+
+def _pick_title(column_title, name_title):
+    """Choose the final title for a contact.
+
+    The title column is checked FIRST: if it already holds a value, that value
+    wins (so when the same title also sits inside the name we keep just the one
+    copy and never duplicate it). Only when the column is empty do we fall back
+    to the title lifted out of the name."""
+    if column_title is not None and not pd.isna(column_title) and str(column_title).strip():
+        return column_title
+    if name_title:
+        return name_title
+    return pd.NA
+
+
+def _norm_title(title):
+    """Canonicalise a title for comparison, or None when blank."""
+    if title is None or pd.isna(title):
+        return None
+    t = str(title).strip().title()
+    return t or None
+
+
+def _partnership_type_for(self_title, partner_title=None) -> str:
+    """Per-ROW partnership role.
+
+    Husband/Wife is assigned ONLY when the couple is a Mr + Mrs pairing
+    (either order): the Mr reads 'Husband', the Mrs reads 'Wife'. Every other
+    combination - Ms + Ms, Mr + Ms, Mr + Mr, a lone title, no titles, Dr, etc.
+    - reads 'Partner' on both rows."""
+    self_t    = _norm_title(self_title)
+    partner_t = _norm_title(partner_title)
+    if {self_t, partner_t} == {"Mr", "Mrs"}:
+        return "Husband" if self_t == "Mr" else "Wife"
+    return "Partner"
+
+
+def _split_couple_first_and_titles(name_val: str):
+    """For a DUAL-field first-name column that holds a couple (e.g.
+    'Mr John & Mrs Jane'), return (first_names, name_titles) with any embedded
+    titles stripped off the names."""
+    parts = _COUPLE_PATTERN.split(str(name_val))
+    firsts, titles = [], []
+    for p in parts:
+        p = p.strip()
+        if not p:
+            continue
+        toks = p.split()
+        t, toks = _extract_title_from_tokens(toks)
+        if not toks:
+            continue
+        firsts.append(toks[0].title())
+        titles.append(t)
+    return firsts, titles
 
 
 # ---------------------------------------------------------------------------
@@ -125,19 +351,29 @@ def expand_couples_in_df(
     id_col: str | None,
     title_col: str | None = None,
     split_mode: str = "single_field",
+    auto_generate_ids: bool = False,
+    id_prefix: str = "",
 ) -> pd.DataFrame:
     expanded_rows = []
     consumed_cols = {c for c in (name_col, surname_col, id_col, title_col) if c}
 
-    for _, row in df.iterrows():
+    for row_pos, (_, row) in enumerate(df.iterrows(), start=1):
         raw_name    = row[name_col]    if (name_col    and name_col    in df.columns) else pd.NA
         raw_surname = row[surname_col] if (surname_col and surname_col in df.columns) else pd.NA
         raw_id      = row[id_col]      if (id_col      and id_col      in df.columns) else pd.NA
         raw_title   = row[title_col]   if (title_col   and title_col   in df.columns) else pd.NA
 
         str_id = str(raw_id).replace('.0', '').strip() if not pd.isna(raw_id) else ''
+        # No usable source ID -> optionally mint a unique one for this source row.
+        # Each source row gets a single base; the _c / _c1 / _c2 suffixes are
+        # appended downstream exactly as they are for real IDs.
+        if not str_id and auto_generate_ids:
+            str_id = f"{id_prefix}{row_pos}"
         is_co = _is_company(str(raw_name)) if not pd.isna(raw_name) else False
         other = {k: v for k, v in row.items() if k not in consumed_cols}
+        # Every split produced from THIS source row shares this group id, so the
+        # phone/email distributor can hand value #1 to split #1, #2 to #2, etc.
+        other['_src_group'] = row_pos
 
         # Handle Companies
         if is_co:
@@ -154,34 +390,116 @@ def expand_couples_in_df(
             continue
 
         name_str = str(raw_name).strip() if not pd.isna(raw_name) else ''
-        couple   = _is_couple(name_str) and split_mode == "single_field"
+
+        # ================================================================
+        # SINGLE-FIELD MODE  -> legacy VB splitter
+        #   first = everything before the last space, surname = last token,
+        #   ' and '/&/;/+/comma separate a couple, surname shared across it.
+        # ================================================================
+        if split_mode == "single_field":
+            is_person, people = split_single_field_name(raw_name, raw_surname)
+
+            # Company / trust / business -> no split, route to company_name.
+            if not is_person:
+                new_row = dict(other)
+                new_row['contact_title']              = pd.NA
+                new_row['contact_first_name']         = pd.NA
+                new_row['contact_surname']            = pd.NA
+                new_row['company_name']               = _clean_name_text(str(raw_name))
+                new_row['contact_identifier']         = f"{str_id}_c" if str_id else pd.NA
+                new_row['contact_partner_identifier'] = pd.NA
+                new_row['contact_partnership_id']     = pd.NA
+                new_row['contact_partnership_type']   = pd.NA
+                expanded_rows.append(new_row)
+                continue
+
+            # Empty / unusable name -> keep the row but leave names blank.
+            if not people:
+                new_row = dict(other)
+                new_row['contact_title']              = pd.NA
+                new_row['contact_first_name']         = pd.NA
+                new_row['contact_surname']            = pd.NA
+                new_row['contact_identifier']         = f"{str_id}_c" if str_id else pd.NA
+                new_row['contact_partner_identifier'] = pd.NA
+                new_row['contact_partnership_id']     = pd.NA
+                new_row['contact_partnership_type']   = pd.NA
+                expanded_rows.append(new_row)
+                continue
+
+            if len(people) >= 2:
+                # ---- Couple / partnership ----
+                col_titles   = _split_couple_titles(raw_title, len(people))
+                final_titles = [_pick_title(col_titles[i], people[i].get("title"))
+                                for i in range(len(people))]
+
+                for idx, person in enumerate(people, start=1):
+                    self_i = idx - 1
+                    partner_i = 1 if idx == 1 else 0  # c1<->c2, c3+ -> c1
+                    new_row = dict(other)
+                    new_row['contact_title']      = final_titles[self_i]
+                    new_row['contact_first_name'] = person["first"]
+                    new_row['contact_surname']    = person["surname"]
+                    new_row['contact_identifier'] = f"{str_id}_c{idx}" if str_id else pd.NA
+
+                    if idx == 1:
+                        partner_idx = 2
+                        partnership_id = f"{str_id}_c1_{str_id}_c2_r"
+                    elif idx == 2:
+                        partner_idx = 1
+                        partnership_id = f"{str_id}_c1_{str_id}_c2_r"
+                    else:
+                        partner_idx = 1
+                        partnership_id = f"{str_id}_c1_{str_id}_c{idx}_r"
+
+                    new_row['contact_partner_identifier'] = f"{str_id}_c{partner_idx}" if str_id else pd.NA
+                    new_row['contact_partnership_id']     = partnership_id if str_id else pd.NA
+                    new_row['contact_partnership_type']   = _partnership_type_for(
+                        final_titles[self_i], final_titles[partner_i])
+                    expanded_rows.append(new_row)
+            else:
+                # ---- Single contact ----
+                person        = people[0]
+                col_title     = _split_couple_titles(raw_title, 1)[0]
+
+                new_row = dict(other)
+                new_row['contact_title']              = _pick_title(col_title, person.get("title"))
+                new_row['contact_first_name']         = person["first"]
+                new_row['contact_surname']            = person["surname"]
+                new_row['contact_identifier']         = f"{str_id}_c" if str_id else pd.NA
+                new_row['contact_partner_identifier'] = pd.NA
+                new_row['contact_partnership_id']     = pd.NA
+                new_row['contact_partnership_type']   = pd.NA
+                expanded_rows.append(new_row)
+            continue
+
+        # ================================================================
+        # DUAL-FIELD MODE  -> first name and surname already in separate
+        # columns; a couple may still live inside the first-name field.
+        # ================================================================
+        couple = _is_couple(name_str)
 
         clean_surname = pd.NA
         if not pd.isna(raw_surname):
             clean_surname = advanced_name_parser(raw_surname, 'contact_surname', 'dual_field')
 
         if couple:
-            first_names = _split_couple_firstnames(name_str)
+            # Strip any embedded titles ('Mr John & Mrs Jane') off the names.
+            first_names, name_titles = _split_couple_first_and_titles(name_str)
             if len(first_names) < 2:
                 couple = False
 
         # Handle Couples (Partnership Generation)
         if couple:
-            # 1. Determine Partnership Type from Original Title
-            t_clean = re.sub(r'[^a-z& ]', '', str(raw_title).lower())
-            if "mr and mrs" in t_clean or "mr & mrs" in t_clean:
-                ptype = "Husband and Wife"
-            elif "mrs and mr" in t_clean or "mrs & mr" in t_clean:
-                ptype = "Wife and Husband"
-            else:
-                ptype = "Partner"
+            col_titles   = _split_couple_titles(raw_title, len(first_names))
+            final_titles = [_pick_title(col_titles[i], name_titles[i])
+                            for i in range(len(first_names))]
 
-            titles = _split_couple_titles(raw_title, len(first_names))
-            
-            # 2. Iterate and assign Partner IDs
-            for idx, (fname, title) in enumerate(zip(first_names, titles), start=1):
+            # Iterate and assign Partner IDs
+            for idx, fname in enumerate(first_names, start=1):
+                self_i = idx - 1
+                partner_i = 1 if idx == 1 else 0  # c1<->c2, c3+ -> c1
                 new_row = dict(other)
-                new_row['contact_title']      = title
+                new_row['contact_title']      = final_titles[self_i]
                 new_row['contact_first_name'] = fname
                 new_row['contact_surname']    = clean_surname
                 new_row['contact_identifier'] = f"{str_id}_c{idx}" if str_id else pd.NA
@@ -199,25 +517,24 @@ def expand_couples_in_df(
                 
                 new_row['contact_partner_identifier'] = f"{str_id}_c{partner_idx}" if str_id else pd.NA
                 new_row['contact_partnership_id']     = partnership_id if str_id else pd.NA
-                new_row['contact_partnership_type']   = ptype
+                new_row['contact_partnership_type']   = _partnership_type_for(
+                    final_titles[self_i], final_titles[partner_i])
                 
                 expanded_rows.append(new_row)
         else:
             # Handle Singles
-            single_titles = _split_couple_titles(raw_title, 1)
-            clean_title   = single_titles[0] if single_titles else pd.NA
+            col_title  = _split_couple_titles(raw_title, 1)[0]
 
-            if split_mode == "single_field" and name_str:
-                clean_first = advanced_name_parser(raw_name, 'contact_first_name', split_mode)
-                if pd.isna(clean_surname):
-                    clean_surname = advanced_name_parser(raw_name, 'contact_surname', split_mode)
-            elif split_mode == "dual_field" and name_str:
-                clean_first = advanced_name_parser(raw_name, 'contact_first_name', 'dual_field')
+            name_title = None
+            if name_str:
+                fn_tokens = str(raw_name).split()
+                name_title, fn_tokens = _extract_title_from_tokens(fn_tokens)
+                clean_first = _clean_name_text(" ".join(fn_tokens)) if fn_tokens else pd.NA
             else:
                 clean_first = pd.NA
 
             new_row = dict(other)
-            new_row['contact_title']              = clean_title
+            new_row['contact_title']              = _pick_title(col_title, name_title)
             new_row['contact_first_name']         = clean_first
             new_row['contact_surname']            = clean_surname
             new_row['contact_identifier']         = f"{str_id}_c" if str_id else pd.NA
@@ -268,68 +585,188 @@ def process_email(val):
     if not e or e in ['nan', 'none', 'n/a', 'na', 'unknown']: return pd.NA
     return e
 
-def process_phones_row(row):
-    """ Cross-column shuffler. Assigns valid numbers to appropriate Zenu fields or overflows to notes. """
-    phone_cols = [c for c in row.index if any(x in c.lower() for x in ['mobile', 'phone', 'fax', 'landline'])]
-    
-    unassigned_mobiles = []
-    unassigned_landlines = []
-    invalids = []
-    
-    final_slots = {c: pd.NA for c in phone_cols}
-    
-    # PASS 1: Extract, Classify, and Try to Keep in Original Matching Slot
-    for col in phone_cols:
-        val = row[col]
-        if pd.isna(val) or str(val).lower() in ["", "nan", "none", "n/a", "na", "unknown"]: 
-            continue
-            
-        cleaned, ptype = clean_and_classify_phone(val)
-        
-        if ptype == 'Invalid':
-            invalids.append(str(val))
-        elif ptype == 'Mobile':
-            if 'mobile' in col.lower() and pd.isna(final_slots[col]):
-                final_slots[col] = cleaned
+
+# ---------------------------------------------------------------------------
+# CONTACT-INFO DISTRIBUTION  (phones + emails, split-aware)
+# ---------------------------------------------------------------------------
+
+# Single-value target fields and the email target field.
+_PHONE_TARGET_FIELDS = ('contact_mobile', 'contact_phone_work',
+                        'contact_phone_home', 'contact_fax')
+_EMAIL_TARGET_FIELD  = 'contact_email_address'
+
+# Values inside one cell may be separated by comma / semicolon / slash / 'and'.
+_CONTACT_SEP = re.compile(r'\s*(?:,|;|/|\band\b)\s*', flags=re.IGNORECASE)
+_EMAIL_RE    = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+
+
+def _split_contact_values(value):
+    """Break a single cell into individual tokens on , ; / and."""
+    if pd.isna(value):
+        return []
+    s = str(value).strip()
+    if not s or s.lower() in ('nan', 'none', 'null', 'n/a', 'na', 'unknown'):
+        return []
+    return [t.strip() for t in _CONTACT_SEP.split(s) if t and t.strip()]
+
+
+def _looks_like_email(token) -> bool:
+    return bool(_EMAIL_RE.match(str(token).strip()))
+
+
+def _dedup_keep_order(seq):
+    seen, out = set(), []
+    for x in seq:
+        k = str(x)
+        if k not in seen:
+            seen.add(k)
+            out.append(x)
+    return out
+
+
+def _distribute(bucket, n):
+    """Spread an ordered list of valid values across n split contacts.
+
+    1 value  -> shared by everyone.
+    >1 value -> handed out 1:1 (value #1 to contact #1 ...); anything left over
+                is returned as 'leftover' for the notes column.
+    """
+    if not bucket:
+        return [pd.NA] * n, []
+    if len(bucket) == 1:
+        return [bucket[0]] * n, []
+    assigned = [pd.NA] * n
+    for i in range(n):
+        if i < len(bucket):
+            assigned[i] = bucket[i]
+    leftover = bucket[n:] if len(bucket) > n else []
+    return assigned, leftover
+
+
+def process_contact_group(gdf: pd.DataFrame) -> pd.DataFrame:
+    """Route, validate and distribute phone numbers and emails for ONE source
+    contact's set of split rows (Australian number rules).
+
+    Rules:
+      * Each of contact_mobile / contact_phone_work / contact_phone_home /
+        contact_fax holds at most one value.
+      * Mobile-format numbers always land in contact_mobile.
+      * Landlines sitting in contact_mobile move to contact_phone_work (company)
+        or contact_phone_home (person).
+      * Emails found in any number field move to contact_email_address.
+      * Cells may contain several values separated by , ; / or 'and'.
+      * Across split contacts, a single value is shared; multiple values are
+        handed out one per split; surplus + invalid go to contact_notes.
+    """
+    cols = set(gdf.columns)
+    phone_cols = [c for c in _PHONE_TARGET_FIELDS if c in cols]
+    has_email  = _EMAIL_TARGET_FIELD in cols
+    if not phone_cols and not has_email:
+        return gdf
+
+    gdf = gdf.copy().reset_index(drop=True)
+    n = len(gdf)
+    base = gdf.iloc[0]
+
+    is_company = False
+    if 'company_name' in cols:
+        cv = base.get('company_name')
+        is_company = (not pd.isna(cv)) and bool(str(cv).strip())
+
+    # ---- classify every token coming from the number fields ----
+    # records: (origin_field, value, kind)  kind in Mobile/Landline/Email/Invalid
+    records = []
+    for fld in phone_cols:
+        for tok in _split_contact_values(base.get(fld)):
+            if _looks_like_email(tok):
+                records.append((fld, tok.lower(), 'Email'))
+                continue
+            cleaned, ptype = clean_and_classify_phone(tok)
+            records.append((fld, cleaned if ptype != 'Invalid' else tok, ptype))
+
+    mobiles, homes, works, faxes, emails = [], [], [], [], []
+    note_items = []
+
+    # Native values are added first so the field's own number wins a tie.
+    for fld, val, kind in records:                         # native mobiles
+        if fld == 'contact_mobile' and kind == 'Mobile':
+            mobiles.append(val)
+    for fld, val, kind in records:                         # mobiles seen elsewhere
+        if fld != 'contact_mobile' and kind == 'Mobile':
+            mobiles.append(val)
+    for fld, val, kind in records:                         # native landlines
+        if fld == 'contact_phone_home' and kind == 'Landline':
+            homes.append(val)
+    for fld, val, kind in records:
+        if fld == 'contact_phone_work' and kind == 'Landline':
+            works.append(val)
+    for fld, val, kind in records:
+        if fld == 'contact_fax' and kind == 'Landline':
+            faxes.append(val)
+    for fld, val, kind in records:                         # landline in mobile field
+        if fld == 'contact_mobile' and kind == 'Landline':
+            (works if is_company else homes).append(val)
+    for fld, val, kind in records:                         # emails in number fields
+        if kind == 'Email':
+            emails.append(val)
+    for fld, val, kind in records:                         # invalids
+        if kind == 'Invalid':
+            note_items.append(f"Invalid Number: {val}")
+
+    # ---- emails from the dedicated email field (these take priority) ----
+    if has_email:
+        ef_emails = []
+        for tok in _split_contact_values(base.get(_EMAIL_TARGET_FIELD)):
+            if _looks_like_email(tok):
+                ef_emails.append(tok.lower())
             else:
-                unassigned_mobiles.append(cleaned)
-        elif ptype == 'Landline':
-            if 'mobile' not in col.lower() and pd.isna(final_slots[col]):
-                final_slots[col] = cleaned
-            else:
-                unassigned_landlines.append(cleaned)
+                note_items.append(f"Invalid Email: {tok}")
+        emails = ef_emails + emails
 
-    # PASS 2: Cross-Assign Any Unassigned Numbers to Empty Slots of the Correct Type
-    for col in phone_cols:
-        if pd.isna(final_slots[col]):
-            if 'mobile' in col.lower() and unassigned_mobiles:
-                final_slots[col] = unassigned_mobiles.pop(0)
-            elif 'mobile' not in col.lower() and unassigned_landlines:
-                final_slots[col] = unassigned_landlines.pop(0)
+    mobiles = _dedup_keep_order(mobiles)
+    homes   = _dedup_keep_order(homes)
+    works   = _dedup_keep_order(works)
+    faxes   = _dedup_keep_order(faxes)
+    emails  = _dedup_keep_order(emails)
 
-    # Update the row with cleanly shifted numbers
-    for col in phone_cols:
-        row[col] = final_slots[col]
+    # ---- distribute across the split rows ----
+    bucket_for = {
+        'contact_mobile':     mobiles,
+        'contact_phone_home': homes,
+        'contact_phone_work': works,
+        'contact_fax':        faxes,
+    }
+    extra_items = []
+    for field, bucket in bucket_for.items():
+        assigned, leftover = _distribute(bucket, n)
+        # Assign whenever there's a value to place (creating the column if it
+        # wasn't in the mapping - e.g. a landline pulled out of contact_mobile
+        # still needs a home/work field), or to clear/normalise a mapped field.
+        # _distribute already shares a single value across every split (c1, c2,
+        # ...) and hands multiples out one per split, so c2-onwards are covered.
+        if bucket or field in cols:
+            gdf[field] = assigned
+        # Only true surplus (more numbers than splits) overflows to notes.
+        extra_items += [f"Extra phone: {v}" for v in leftover]
 
-    # PASS 3: Handle Overflow (Extras and Invalids go to contact_notes)
-    notes_to_add = []
-    for m in unassigned_mobiles: notes_to_add.append(f"Extra Mobile: {m}")
-    for l in unassigned_landlines: notes_to_add.append(f"Extra Landline: {l}")
-    for i in invalids: notes_to_add.append(f"Invalid Phone Data: {i}")
+    if emails or has_email:
+        assigned, leftover = _distribute(emails, n)
+        gdf[_EMAIL_TARGET_FIELD] = assigned          # created if not mapped
+        extra_items += [f"Extra email: {v}" for v in leftover]
 
-    if notes_to_add:
-        cid = str(row.get('contact_identifier', ''))
-        # Protect _c2, _c3, etc. splits from getting duplicate invalid notes
-        if not re.search(r'_c[2-9]\d*$', cid):
-            existing_notes = row.get('contact_notes', pd.NA)
-            append_str = " | ".join(notes_to_add)
-            
-            if pd.isna(existing_notes) or str(existing_notes).strip() == "":
-                row['contact_notes'] = append_str
-            else:
-                row['contact_notes'] = str(existing_notes) + "\n" + append_str
+    # ---- overflow + invalid notes go on the FIRST split only ----
+    all_notes = extra_items + note_items
+    if all_notes:
+        if 'contact_notes' not in gdf.columns:
+            gdf['contact_notes'] = pd.NA
+        existing = gdf.at[0, 'contact_notes']
+        joined = " | ".join(all_notes)
+        if pd.isna(existing) or not str(existing).strip():
+            gdf.at[0, 'contact_notes'] = joined
+        else:
+            gdf.at[0, 'contact_notes'] = f"{existing}\n{joined}"
 
-    return row
+    return gdf
 
 # ---------------------------------------------------------------------------
 # GeneralProcessor
@@ -366,6 +803,102 @@ class GeneralProcessor:
             self.engine.log(f"[{self.job_id}] CRITICAL: '{table_name}' table missing in DB.")
             return None
         return pd.read_sql_query(f'SELECT * FROM "{table_name}"', self.conn)
+
+    # ------------------------------------------------------------------
+    # Interactive prompts
+    #
+    # Answers are resolved in priority order so the processor works whether
+    # it runs in a console, behind a UI, or as an unattended job:
+    #   1. A preset supplied on the engine: engine.general_config[key]
+    #   2. An engine-provided callback:     engine.ask(question, options)
+    #   3. A live console prompt (only when attached to a TTY)
+    #   4. The supplied default
+    # ------------------------------------------------------------------
+
+    def _resolve_preset(self, key: str):
+        cfg = getattr(self.engine, "general_config", None) or {}
+        return cfg.get(key)
+
+    def _interactive(self) -> bool:
+        # Console prompts are OFF unless explicitly turned on with
+        # engine.interactive = True.
+        #
+        # IMPORTANT: we deliberately do NOT use sys.stdin.isatty() here. Under
+        # uvicorn / FastAPI BackgroundTasks, stdin is still attached to the
+        # terminal that launched the server, so isatty() returns True and a
+        # console prompt would call input() and hang the whole job until the
+        # server is killed. The web pipeline never sets this flag, so it stays
+        # fully non-blocking; a CLI/dev run can opt in with engine.interactive = True.
+        return bool(getattr(self.engine, "interactive", False))
+
+    def _ask(self, key: str, question: str, options: list, default: str) -> str:
+        """options: list of (value, label). Returns one of the option values."""
+        valid = {value for value, _ in options}
+
+        # 1. Preset answer
+        preset = self._resolve_preset(key)
+        if preset in valid:
+            self.engine.log(f"[{self.job_id}] '{key}' answered from config: {preset}")
+            return preset
+
+        # 2. Engine callback (custom UI / web layer)
+        cb = getattr(self.engine, "ask", None)
+        if callable(cb):
+            try:
+                ans = cb(question, options)
+                if ans in valid:
+                    self.engine.log(f"[{self.job_id}] '{key}' answered via engine.ask: {ans}")
+                    return ans
+            except Exception as e:
+                self.engine.log(f"[{self.job_id}] engine.ask failed for '{key}': {e}")
+
+        # 3. Live console
+        if self._interactive():
+            print(f"\n{question}", flush=True)
+            for i, (_, label) in enumerate(options, start=1):
+                print(f"  {i}. {label}", flush=True)
+            try:
+                raw = input(f"Select [1-{len(options)}] (default {default}): ").strip()
+            except (EOFError, KeyboardInterrupt):
+                raw = ""
+            if raw.isdigit():
+                idx = int(raw) - 1
+                if 0 <= idx < len(options):
+                    return options[idx][0]
+            if raw in valid:
+                return raw
+
+        # 4. Default
+        self.engine.log(f"[{self.job_id}] '{key}' using default: {default}")
+        return default
+
+    def _ask_split_mode(self) -> str:
+        return self._ask(
+            key="split_mode",
+            question="How are the contact names stored in the source file?",
+            options=[
+                ("single_field",
+                 "All names are in ONE field (first + surname together) - split them"),
+                ("dual_field",
+                 "First name and surname are already in SEPARATE fields"),
+            ],
+            default="single_field",
+        )
+
+    def _ask_create_identifier(self) -> bool:
+        ans = self._ask(
+            key="create_identifier",
+            question=("No contact identifier was mapped. Should the system "
+                      "create a unique Contact_identifier for each row?"),
+            options=[
+                ("yes",
+                 "Yes - generate a unique ID per row (suffixed _c, or _c1/_c2 for couples)"),
+                ("no",
+                 "No - leave the contact identifier blank"),
+            ],
+            default="no",
+        )
+        return ans == "yes"
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -410,11 +943,16 @@ class GeneralProcessor:
             else:
                 other_rules.append(rule)
 
-        # ── 4. Build zenu_output for non-name fields first ────────────
+        # ── 4. Build zenu_output for non-name fields ──────────────────
+        # When name rules are present, step 5 rebuilds every non-name rule on
+        # the *expanded* rows and discards whatever we'd compute here, so doing
+        # it now just runs every concat/lookup twice. Only pre-build when there
+        # is no name expansion to follow.
         zenu_output = pd.DataFrame(index=df.index)
 
-        for rule in other_rules:
-            zenu_output = self._apply_rule(rule, df, zenu_output)
+        if not name_rules:
+            for rule in other_rules:
+                zenu_output = self._apply_rule(rule, df, zenu_output)
 
         # ── 5. Couple-aware name expansion ────────────────────────────
         if name_rules:
@@ -426,21 +964,85 @@ class GeneralProcessor:
                 return srcs[0].get("field") if srcs else None
 
             first_rule  = name_rules.get('contact_first_name', {})
-            split_mode  = first_rule.get("splitRule", "single_field")
 
             name_col    = _src_field('contact_first_name')
             surname_col = _src_field('contact_surname')
             id_col      = _src_field('contact_identifier')
             title_col   = _src_field('contact_title')
 
+            # ── Decide the name-splitting strategy ────────────────────
+            # Honour an explicit splitRule from the mapping; otherwise ask.
+            split_mode = first_rule.get("splitRule")
+            if split_mode not in ("single_field", "dual_field"):
+                split_mode = self._ask_split_mode()
+
+            # ── Decide how the contact identifier is produced ─────────
+            # Resolution order (so the web UI can drive this purely through the
+            # mapping JSON, with no console interaction):
+            #   1. A flag on the contact_identifier rule
+            #      ("autoGenerate" / "generateIfMissing" / "createIdentifier")
+            #   2. engine.general_config / engine.ask / console (CLI only)
+            #   3. Safe default: do NOT auto-generate (blank identifier)
+            id_rule           = name_rules.get('contact_identifier', {}) or {}
+            has_id            = bool(id_col) and id_col in df.columns
+            auto_generate_ids = False
+            id_prefix         = (id_rule.get("idPrefix")
+                                 or self._resolve_preset("id_prefix") or "")
+
+            def _coerce_yes_no(v):
+                if isinstance(v, bool):
+                    return v
+                if v is None:
+                    return None
+                s = str(v).strip().lower()
+                if s in ("yes", "true", "1", "y"):
+                    return True
+                if s in ("no", "false", "0", "n"):
+                    return False
+                return None
+
+            if has_id:
+                # File already has an ID -> reuse it and append _c (existing logic).
+                self.engine.log(
+                    f"[{self.job_id}] Using existing identifier column "
+                    f"'{id_col}' (suffix '_c' appended per contact)."
+                )
+            else:
+                # No identifier mapped. Prefer an explicit flag from the mapping.
+                rule_flag = None
+                for key in ("autoGenerate", "generateIfMissing", "createIdentifier"):
+                    rule_flag = _coerce_yes_no(id_rule.get(key))
+                    if rule_flag is not None:
+                        break
+
+                if rule_flag is not None:
+                    auto_generate_ids = rule_flag
+                else:
+                    # No mapping flag -> config/callback/console (CLI) or default no.
+                    auto_generate_ids = self._ask_create_identifier()
+
+                if auto_generate_ids:
+                    self.engine.log(
+                        f"[{self.job_id}] No identifier column found; "
+                        f"auto-generating Contact_identifier per row "
+                        f"(prefix='{id_prefix or '<none>'}')."
+                    )
+                else:
+                    self.engine.log(
+                        f"[{self.job_id}] No identifier column found; "
+                        f"leaving Contact_identifier blank."
+                    )
+
             self.engine.log(
                 f"[{self.job_id}] Running couple-expansion "
                 f"(name='{name_col}', surname='{surname_col}', id='{id_col}', "
-                f"title='{title_col}', mode='{split_mode}')..."
+                f"title='{title_col}', mode='{split_mode}', "
+                f"auto_id={auto_generate_ids})..."
             )
 
             expanded = expand_couples_in_df(
-                df, name_col, surname_col, id_col, title_col, split_mode
+                df, name_col, surname_col, id_col, title_col, split_mode,
+                auto_generate_ids=auto_generate_ids, id_prefix=id_prefix,
             )
 
             name_out_cols = [
@@ -459,19 +1061,28 @@ class GeneralProcessor:
             for col in name_out_cols:
                 zenu_expanded[col] = expanded[col].values
 
+            # Carry the source-group id so phone/email distribution can map
+            # value #1 -> split #1, value #2 -> split #2, etc.
+            if '_src_group' in expanded.columns:
+                zenu_expanded['_src_group'] = expanded['_src_group'].values
+
             zenu_output = zenu_expanded
             
-        # ── 6. SMART POST-PROCESSING (EMAILS & PHONES) ──────────────
-        for col in zenu_output.columns:
-            if 'email' in col.lower():
-                zenu_output[col] = zenu_output[col].apply(process_email)
+        # ── 6. SMART POST-PROCESSING (PHONES & EMAILS, split-aware) ─────
+        # Each source contact (its set of split rows) is processed together so
+        # numbers/emails can be validated, routed to the right single-value
+        # field, and handed out across the splits, with overflow -> notes.
+        if '_src_group' not in zenu_output.columns:
+            zenu_output['_src_group'] = range(len(zenu_output))
 
-        # If any phone columns exist, prep for notes and apply the cross-shuffler
-        if any(any(x in c.lower() for x in ['mobile', 'phone', 'landline', 'fax']) for c in zenu_output.columns):
-            if 'contact_notes' not in zenu_output.columns:
-                zenu_output['contact_notes'] = pd.NA
-                
-            zenu_output = zenu_output.apply(process_phones_row, axis=1)
+        contact_info_cols = list(_PHONE_TARGET_FIELDS) + [_EMAIL_TARGET_FIELD]
+        if any(c in zenu_output.columns for c in contact_info_cols):
+            processed_groups = []
+            for _, gdf in zenu_output.groupby('_src_group', sort=False):
+                processed_groups.append(process_contact_group(gdf))
+            zenu_output = pd.concat(processed_groups, ignore_index=True)
+
+        zenu_output = zenu_output.drop(columns=['_src_group'], errors='ignore')
 
         # ── 7. Global sanitisation ────────────────────────────────────
         def _clean(val):
