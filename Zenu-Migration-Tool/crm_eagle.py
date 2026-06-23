@@ -36,8 +36,182 @@ class EagleProcessor:
             self.process_property_notes(rules)
         elif group_lower == "tasks":
             self.process_tasks(rules)
+        elif group_lower == "offer":
+            self.process_offer(rules)
         else:
             self.engine.log(f"[{self.job_id}] Eagle Processor: Group '{group_name}' logic pending.")
+
+    # =========================================================================================
+    # SHARED HELPER: DYNAMIC BASE-TABLE LOADER (handles split source files)
+    # =========================================================================================
+    def _load_base_table(self, base_file, group_label="data"):
+        """
+        Load a base source table by name and return it as a single DataFrame.
+
+        Resolution order:
+          1. If a table named exactly `base_file` exists (e.g. 'notes.csv'),
+             read and return it as-is. (Fully backward compatible.)
+          2. Otherwise, auto-detect split parts that follow the
+             '<stem>_<n><ext>' convention (e.g. notes_1.csv, notes_2.csv, ...),
+             read them in numeric order, and concatenate into one DataFrame.
+
+        Returns the combined DataFrame, or None if nothing usable is found
+        (callers should `return` when None is received).
+        """
+        cursor = self.conn.cursor()
+
+        # 1. Exact single-file match -> use directly.
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?;",
+            (base_file,)
+        )
+        if cursor.fetchone():
+            return pd.read_sql_query(f'SELECT * FROM "{base_file}"', self.conn)
+
+        # 2. No exact match -> look for split parts: <stem>_<number><ext>.
+        stem, ext = os.path.splitext(base_file)  # 'notes.csv' -> ('notes', '.csv')
+        part_pattern = re.compile(
+            rf'^{re.escape(stem)}_(\d+){re.escape(ext)}$',
+            re.IGNORECASE
+        )
+
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        all_tables = [row[0] for row in cursor.fetchall()]
+
+        parts = []
+        for name in all_tables:
+            match = part_pattern.match(name)
+            if match:
+                parts.append((int(match.group(1)), name))
+
+        if not parts:
+            self.engine.log(
+                f"[{self.job_id}] CRITICAL: '{base_file}' table missing "
+                f"(and no '{stem}_N{ext}' split parts found). Cannot process {group_label}."
+            )
+            return None
+
+        # Sort numerically so notes_2 comes before notes_10, etc.
+        parts.sort(key=lambda t: t[0])
+        ordered_names = [name for _, name in parts]
+        self.engine.log(
+            f"[{self.job_id}] '{base_file}' not found as a single table. "
+            f"Combining {len(parts)} split part(s): {', '.join(ordered_names)}"
+        )
+
+        # Also expose the split parts as a single SQLite VIEW (e.g. 'notes_all') for easy
+        # ad-hoc querying / data cross-checking directly in the database.
+        self._create_combined_view(base_file, ordered_names)
+
+        frames = []
+        for name in ordered_names:
+            try:
+                frames.append(pd.read_sql_query(f'SELECT * FROM "{name}"', self.conn))
+            except Exception as part_err:
+                self.engine.log(
+                    f"[{self.job_id}] WARNING: failed to read split part '{name}': {part_err}"
+                )
+
+        if not frames:
+            self.engine.log(
+                f"[{self.job_id}] CRITICAL: split parts for '{base_file}' were found "
+                f"but none could be read. Cannot process {group_label}."
+            )
+            return None
+
+        combined = pd.concat(frames, ignore_index=True, sort=False)
+        self.engine.log(
+            f"[{self.job_id}] Combined {len(frames)} part(s) into "
+            f"{len(combined)} total rows for '{base_file}'."
+        )
+        return combined
+
+    def _create_combined_view(self, base_file, part_tables):
+        """
+        Create (or refresh) a SQLite VIEW that UNIONs all split parts of a base file into
+        one queryable object, e.g. notes_1.csv .. notes_9.csv  ->  view "notes_all".
+
+        Nothing is duplicated on disk -- a view is just a stored query. Columns are aligned
+        across the parts (any column missing from a part is filled with NULL), and an extra
+        "_source_table" column records which split each row originated from, which makes it
+        easy to cross-check counts per part. Querying is then simply:  SELECT * FROM notes_all
+        """
+        stem, _ext = os.path.splitext(base_file)
+        view_name = f"{stem}_all"   # e.g. notes.csv -> "notes_all"
+        try:
+            cur = self.conn.cursor()
+
+            # Build an ordered union of columns across all parts (first-seen order kept).
+            union_cols = []
+            cols_per_table = {}
+            for t in part_tables:
+                cur.execute(f'PRAGMA table_info("{t}")')
+                cols = [row[1] for row in cur.fetchall()]
+                cols_per_table[t] = set(cols)
+                for c in cols:
+                    if c not in union_cols:
+                        union_cols.append(c)
+
+            if not union_cols:
+                return None
+
+            # One SELECT per part, aligned to the union column list (NULL for missing cols),
+            # plus a literal tag for the source table.
+            selects = []
+            for t in part_tables:
+                tcols = cols_per_table[t]
+                exprs = [(f'"{c}"' if c in tcols else f'NULL AS "{c}"') for c in union_cols]
+                safe_tag = t.replace("'", "''")
+                exprs.append(f"'{safe_tag}' AS \"_source_table\"")
+                selects.append(f'SELECT {", ".join(exprs)} FROM "{t}"')
+
+            union_sql = " UNION ALL ".join(selects)
+            cur.execute(f'DROP VIEW IF EXISTS "{view_name}"')
+            cur.execute(f'CREATE VIEW "{view_name}" AS {union_sql}')
+            self.conn.commit()
+            self.engine.log(
+                f"[{self.job_id}] Created SQLite view '{view_name}' unioning "
+                f"{len(part_tables)} split part(s) -- query with: SELECT * FROM {view_name}"
+            )
+            return view_name
+        except Exception as view_err:
+            self.engine.log(
+                f"[{self.job_id}] WARNING: could not create combined view for '{base_file}': {view_err}"
+            )
+            return None
+
+    # =========================================================================================
+    # SHARED HELPER: LAND-SIZE-SYSTEM NORMALISER
+    # =========================================================================================
+    def _normalize_land_size_system(self, series):
+        """
+        Normalise a raw land-size unit column (e.g. 'Square Meters', 'Acres') into Zenu's
+        land-size system codes, consistent with the contact_criteria_land_unit conversion
+        used in Contact Requirement ('Square Meters' -> 'SQM', 'Acres' -> 'ACRE').
+
+        Blank/NaN values stay blank. Unrecognised values are upper-cased and passed
+        through unchanged so nothing is silently dropped.
+        """
+        val = series.astype(str).str.strip()
+        is_blank = val.str.lower().isin(['', 'nan', 'none', '<na>'])
+        upper = val.str.upper()
+
+        mapping = {
+            'SQUARE METERS': 'SQM',
+            'SQUARE METER': 'SQM',
+            'SQUARE METRES': 'SQM',
+            'SQUARE METRE': 'SQM',
+            'SQM': 'SQM',
+            'M2': 'SQM',
+            'ACRES': 'ACRE',
+            'ACRE': 'ACRE',
+            'HECTARES': 'HECTARE',
+            'HECTARE': 'HECTARE',
+            'HA': 'HECTARE',
+        }
+        normalized = upper.replace(mapping)
+        normalized = normalized.mask(is_blank, '')
+        return normalized
 
     # =========================================================================================
     # CONTACT REQUIREMENT (Untouched)
@@ -56,38 +230,144 @@ class EagleProcessor:
 
             df = pd.read_sql_query(f'SELECT * FROM "{base_file}"', self.conn)
             
-            if 'bp_listing_types' in df.columns:
-                df['bp_listing_types'] = df['bp_listing_types'].fillna('').astype(str).apply(
-                    lambda x: x.split(';')[0].strip()
-                )
-
+            # Normalise price/rent columns up front (blank -> NaN) so presence checks are reliable.
             price_cols = ['bp_min_price', 'bp_max_price', 'bp_min_rent', 'bp_max_rent']
             for col in price_cols:
                 if col in df.columns:
                     df[col] = df[col].replace(['', 'nan', 'NaN', 'None'], np.nan)
 
-            has_sale = pd.Series(False, index=df.index)
-            has_lease = pd.Series(False, index=df.index)
+            # Keep the FULL bp_listing_types value (do NOT truncate to the first token), because
+            # Mapping.csv is keyed on the entire combination string (e.g.
+            # "residential_sale;residential_rental;rural").
+            if 'bp_listing_types' in df.columns:
+                df['bp_listing_types'] = df['bp_listing_types'].fillna('').astype(str).str.strip()
 
-            if 'bp_min_price' in df.columns and 'bp_max_price' in df.columns:
-                has_sale = df['bp_min_price'].notna() | df['bp_max_price'].notna()
-                
-            if 'bp_min_rent' in df.columns and 'bp_max_rent' in df.columns:
-                has_lease = df['bp_min_rent'].notna() | df['bp_max_rent'].notna()
+            # ==========================================================================
+            # MAPPING-DRIVEN ROW EXPANSION (Sale/Lease + Category)
+            #
+            # Mapping.csv (cols A-C) maps each raw bp_listing_types combo to one or more
+            # (Equivalent, Category) pairs. Example:
+            #   residential_sale;residential_rental;rural ->
+            #       (Sale, Residential), (Lease, Residential), (Sale, Rural)
+            #
+            # For each contact we create one output row per pair, BUT only when the matching
+            # price/rent values exist:
+            #   * a SALE  row is kept only if bp_min_price OR bp_max_price has a value
+            #   * a LEASE row is kept only if bp_min_rent  OR bp_max_rent  has a value
+            # If none of a contact's pairs survive this check, that contact yields no rows.
+            # ==========================================================================
+            pair_map = {}
+            try:
+                map_df = pd.read_sql_query(
+                    'SELECT "bp_listing_types", "Equivalent", "Category" FROM "Mapping.csv"',
+                    self.conn
+                )
+                for _, m in map_df.iterrows():
+                    key = str(m['bp_listing_types']).strip().lower()
+                    equiv = str(m['Equivalent']).strip()
+                    category = str(m['Category']).strip()
+                    if key == '' or equiv == '':
+                        continue
+                    sale_method = 'SALE' if equiv.upper() == 'SALE' else 'LEASE'
+                    pair = (sale_method, category)
+                    bucket = pair_map.setdefault(key, [])
+                    if pair not in bucket:          # de-duplicate identical pairs
+                        bucket.append(pair)
+            except Exception as map_err:
+                self.engine.log(f"[{self.job_id}] CRITICAL: could not load Mapping.csv for listing-type expansion: {map_err}")
 
-            intent_list = []
-            for s, l in zip(has_sale, has_lease):
-                if s and l:
-                    intent_list.append(['SALE', 'LEASE']) 
-                elif l:
-                    intent_list.append(['LEASE'])
-                else:
-                    intent_list.append(['SALE']) 
+            def _present(cols):
+                cols = [c for c in cols if c in df.columns]
+                mask = pd.Series(False, index=df.index)
+                for c in cols:
+                    s = df[c].astype(str).str.strip()
+                    col_mask = df[c].notna() & (s != '') & (~s.str.lower().isin(['nan', 'none', '<na>']))
+                    mask = mask | col_mask
+                return mask
 
-            df['_calculated_sale_method'] = intent_list
-            
-            self.engine.log(f"[{self.job_id}] Duplicating rows for contacts with dual Sale/Lease pricing...")
-            df = df.explode('_calculated_sale_method').reset_index(drop=True)
+            has_price = _present(['bp_min_price', 'bp_max_price'])
+            has_rent = _present(['bp_min_rent', 'bp_max_rent'])
+
+            # A contact still carries useful criteria (and should NOT be dropped) if any of the
+            # source columns feeding contact_criteria_property_type / price_from / bedrooms /
+            # bathrooms holds a value -- even when no Sale/Lease price gate passes.
+            has_other_criteria = _present([
+                'bp_property_types',
+                'bp_min_price', 'bp_max_price', 'bp_min_rent', 'bp_max_rent',
+                'bp_max_bedrooms', 'bp_min_bedrooms',
+                'bp_max_bathrooms', 'bp_min_bathrooms',
+            ])
+
+            if 'bp_listing_types' in df.columns:
+                combos = df['bp_listing_types'].astype(str).str.strip().str.lower()
+            else:
+                combos = pd.Series([''] * len(df), index=df.index)
+
+            mapped_pairs = combos.map(pair_map)
+
+            unmapped = set()
+            fallback_kept = 0
+            pair_lists = []
+            for combo, pairs, hp, hr, hc in zip(
+                combos.tolist(), mapped_pairs.tolist(),
+                has_price.tolist(), has_rent.tolist(), has_other_criteria.tolist()
+            ):
+                if not isinstance(pairs, list):
+                    if combo:
+                        unmapped.add(combo)
+                    pair_lists.append([])
+                    continue
+                kept = []
+                for sale_method, category in pairs:
+                    if sale_method == 'SALE' and not hp:
+                        continue
+                    if sale_method == 'LEASE' and not hr:
+                        continue
+                    kept.append((sale_method, category))
+
+                # Fallback: the price/rent gate removed every pair, but the contact still has
+                # meaningful criteria (property type / price_from / bedrooms / bathrooms). Keep a
+                # single row so the data survives. For a single-pair combo (no split needed) this
+                # simply retains that one row; for a multi-pair combo it keeps the first mapped
+                # pair only, so we never fabricate price-less duplicate Sale/Lease rows.
+                if not kept and hc and pairs:
+                    kept = [pairs[0]]
+                    fallback_kept += 1
+
+                pair_lists.append(kept)
+
+            if unmapped:
+                sample = ', '.join(sorted(unmapped)[:15]) + (' ...' if len(unmapped) > 15 else '')
+                self.engine.log(
+                    f"[{self.job_id}] WARNING: {len(unmapped)} bp_listing_types value(s) not found "
+                    f"in Mapping.csv and were skipped: {sample}"
+                )
+
+            if fallback_kept:
+                self.engine.log(
+                    f"[{self.job_id}] Retained {fallback_kept} contact(s) with no Sale/Lease price "
+                    f"but with other criteria (property type / price / bedrooms / bathrooms)."
+                )
+
+            df['_pair_list'] = pair_lists
+
+            # Keep only contacts with at least one surviving Sale/Lease pair, then expand
+            # one output row per pair.
+            df = df[df['_pair_list'].map(len) > 0].reset_index(drop=True)
+            df = df.explode('_pair_list').reset_index(drop=True)
+            df = df[df['_pair_list'].notna()].reset_index(drop=True)
+
+            if df.empty:
+                df['_calculated_sale_method'] = pd.Series(dtype=str)
+                df['_calculated_category'] = pd.Series(dtype=str)
+            else:
+                df['_calculated_sale_method'] = df['_pair_list'].apply(lambda p: p[0])
+                df['_calculated_category'] = df['_pair_list'].apply(lambda p: p[1])
+
+            self.engine.log(
+                f"[{self.job_id}] Expanded {len(df)} Sale/Lease criteria row(s) from Mapping.csv "
+                f"(price/rent presence enforced per row)."
+            )
 
             zenu_df = pd.DataFrame(index=df.index)
 
@@ -101,6 +381,10 @@ class EagleProcessor:
                 if target_field.strip().lower() == 'contact_criteria_sale_method':
                     zenu_df[target_field] = df['_calculated_sale_method']
                     continue 
+
+                if target_field.strip().lower() == 'contact_criteria_category':
+                    zenu_df[target_field] = df['_calculated_category']
+                    continue
 
                 if action == 'direct':
                     if primary_src_field and primary_src_field in df.columns:
@@ -432,6 +716,15 @@ class EagleProcessor:
                     zenu_df[target_field] = ''
                     continue
 
+                if target_field == 'listing_land_size_system':
+                    src_col = primary_src_field if (primary_src_field and primary_src_field in df.columns) else (
+                        'land_size_units' if 'land_size_units' in df.columns else None)
+                    if src_col:
+                        zenu_df[target_field] = self._normalize_land_size_system(df[src_col])
+                    else:
+                        zenu_df[target_field] = ''
+                    continue
+
                 if action == 'direct':
                     if primary_src_field and primary_src_field in df.columns:
                         zenu_df[target_field] = df[primary_src_field].apply(safe_str)
@@ -598,6 +891,15 @@ class EagleProcessor:
                     zenu_df[target_field] = ''
                     continue
 
+                if target_field == 'listing_land_size_system':
+                    src_col = primary_src_field if (primary_src_field and primary_src_field in df.columns) else (
+                        'land_size_units' if 'land_size_units' in df.columns else None)
+                    if src_col:
+                        zenu_df[target_field] = self._normalize_land_size_system(df[src_col])
+                    else:
+                        zenu_df[target_field] = ''
+                    continue
+
                 if action == 'direct':
                     if primary_src_field and primary_src_field in df.columns:
                         if target_field == 'property_appraisal_date':
@@ -691,23 +993,43 @@ class EagleProcessor:
                 else:
                     zenu_df['_raw_id'] = 0
                 
-                zenu_df = zenu_df.sort_values(['_raw_date', '_raw_id'], ascending=[False, False])
-                
-                zenu_df['_temp_method'] = zenu_df['property_sale_method'].astype(str).str.lower().str.strip()
-                zenu_df['_temp_addr'] = zenu_df['property_full_address'].astype(str).str.lower().str.strip()
+                # ----------------------------------------------------------------------
+                # STEP 1 - STATUS FIRST: 'Lost' appraisals are never imported. They are set
+                # to 'N' and EXCLUDED from the dedup, so a lost record can no longer consume
+                # the 'Y' from a valid (retained) appraisal at the same address/sale-method.
+                # ----------------------------------------------------------------------
+                zenu_df['For import'] = 'N'
 
-                zenu_df['For import'] = np.where(
-                    zenu_df.duplicated(subset=['_temp_method', '_temp_addr'], keep='first'), 
-                    'N', 
-                    'Y'
-                )
-                
                 if 'status' in zenu_df.columns:
                     is_lost = zenu_df['status'].astype(str).str.strip().str.lower() == 'lost'
-                    zenu_df.loc[is_lost, 'For import'] = 'N'
-                    self.engine.log(f"[{self.job_id}] Overrode 'For import' to 'N' for Appraisals with 'Lost' status.")
-                
-                zenu_df = zenu_df.drop(columns=['_raw_date', '_raw_id', '_temp_method', '_temp_addr']).sort_index()
+                else:
+                    is_lost = pd.Series(False, index=zenu_df.index)
+
+                # ----------------------------------------------------------------------
+                # STEP 2 - RETAINED LIST: among the non-lost appraisals only, the most recent
+                # appraisal date per (sale method + full address) is the import record ('Y');
+                # any older duplicates are 'N'.
+                # ----------------------------------------------------------------------
+                retained = zenu_df.loc[~is_lost].copy()
+                retained['_temp_method'] = retained['property_sale_method'].astype(str).str.lower().str.strip()
+                retained['_temp_addr'] = retained['property_full_address'].astype(str).str.lower().str.strip()
+                retained = retained.sort_values(['_raw_date', '_raw_id'], ascending=[False, False])
+
+                retained_flags = pd.Series(
+                    np.where(
+                        retained.duplicated(subset=['_temp_method', '_temp_addr'], keep='first'),
+                        'N',
+                        'Y'
+                    ),
+                    index=retained.index
+                )
+                zenu_df.loc[retained_flags.index, 'For import'] = retained_flags
+
+                lost_count = int(is_lost.sum())
+                if lost_count:
+                    self.engine.log(f"[{self.job_id}] Excluded {lost_count} 'Lost' appraisal(s) from import ('N') before applying recent-date dedup.")
+
+                zenu_df = zenu_df.drop(columns=['_raw_date', '_raw_id'], errors='ignore').sort_index()
 
             zenu_df = zenu_df.replace(['nan', 'NaN', 'NAN', 'None', 'NONE', 'none', '<NA>', ''], np.nan)
             
@@ -1070,15 +1392,28 @@ class EagleProcessor:
                     zenu_df[target_field] = safe_keys.map(lambda k: safe_str(contracts_dict.get(k, {}).get('property_id', '')))
                     continue
 
+                # contact_identifier: keep ONLY the first split contact (e.g. _c1) and ignore
+                # _c2, _c3 ... so a buyer linked to a split contact produces a single row
+                # instead of one row per split identifier.
+                if target_field == 'contact_identifier':
+                    try:
+                        cleaned_df = pd.read_sql_query('SELECT "Raw ORIG CONTACT_IDENTIFIER", "CONTACT_IDENTIFIER" FROM "contact_cleaned.csv"', self.conn)
+                        cleaned_df['Raw ORIG CONTACT_IDENTIFIER'] = cleaned_df['Raw ORIG CONTACT_IDENTIFIER'].apply(safe_str)
+                        first_split = cleaned_df.drop_duplicates(subset=['Raw ORIG CONTACT_IDENTIFIER'], keep='first').set_index('Raw ORIG CONTACT_IDENTIFIER')['CONTACT_IDENTIFIER'].to_dict()
+                        zenu_df[target_field] = safe_keys.map(first_split).fillna('')
+                    except Exception as e:
+                        self.engine.log(f"[{self.job_id}] Lookup error for contact_identifier: {e}")
+                    continue
+
                 if target_field == 'Buyer Solicitor Identifier':
                     try:
                         solicitor_ids = safe_keys.map(lambda k: safe_str(contracts_dict.get(k, {}).get('purchaser_solicitor_id', '')))
                         
                         cleaned_df = pd.read_sql_query('SELECT "Raw ORIG CONTACT_IDENTIFIER", "CONTACT_IDENTIFIER" FROM "contact_cleaned.csv"', self.conn)
                         cleaned_df['Raw ORIG CONTACT_IDENTIFIER'] = cleaned_df['Raw ORIG CONTACT_IDENTIFIER'].apply(safe_str)
-                        grouped_lookup = cleaned_df.groupby('Raw ORIG CONTACT_IDENTIFIER')['CONTACT_IDENTIFIER'].apply(list).to_dict()
+                        first_split = cleaned_df.drop_duplicates(subset=['Raw ORIG CONTACT_IDENTIFIER'], keep='first').set_index('Raw ORIG CONTACT_IDENTIFIER')['CONTACT_IDENTIFIER'].to_dict()
                         
-                        zenu_df[target_field] = solicitor_ids.map(grouped_lookup)
+                        zenu_df[target_field] = solicitor_ids.map(first_split).fillna('')
                     except Exception as e:
                         self.engine.log(f"[{self.job_id}] Lookup error for Buyer Solicitor Identifier: {e}")
                     continue
@@ -1134,6 +1469,10 @@ class EagleProcessor:
                             zenu_df[target_field] = safe_keys.map(grouped_lookup)
                         except Exception as lookup_err:
                             self.engine.log(f"[{self.job_id}] Lookup warning for {target_field}: {lookup_err}")
+
+            # Include the raw source contract_id (from purchasers.csv) in the output.
+            if 'contract_id' in df.columns:
+                zenu_df['contract_id'] = df['contract_id'].apply(safe_str)
 
             list_cols = [col for col in zenu_df.columns if zenu_df[col].apply(type).eq(list).any()]
             for col in list_cols:
@@ -1260,12 +1599,9 @@ class EagleProcessor:
         
         try:
             cursor = self.conn.cursor()
-            cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{base_file}';")
-            if not cursor.fetchone():
-                self.engine.log(f"[{self.job_id}] CRITICAL: '{base_file}' table missing. Cannot process Enquiries.")
+            df = self._load_base_table(base_file, "Enquiries")
+            if df is None:
                 return
-
-            df = pd.read_sql_query(f'SELECT * FROM "{base_file}"', self.conn)
 
             def safe_str(x):
                 if pd.isna(x) or str(x).strip().lower() == 'nan': return ''
@@ -1384,6 +1720,130 @@ class EagleProcessor:
             self.engine.log(f"[{self.job_id}] ERROR in Enquiries mapping: {e}")
 
     # =========================================================================================
+    # OFFER (notes.csv filtered to note_type = 'Offer')
+    # =========================================================================================
+    def process_offer(self, rules):
+        self.engine.log(f"[{self.job_id}] Executing Eagle Transformation for Offers...")
+
+        base_file = "notes.csv"
+
+        try:
+            cursor = self.conn.cursor()
+            df = self._load_base_table(base_file, "Offer")
+            if df is None:
+                return
+
+            def safe_str(x):
+                if pd.isna(x) or str(x).strip().lower() == 'nan': return ''
+                s = str(x).strip()
+                return s[:-2] if s.endswith('.0') else s
+
+            def parse_au_date(date_series):
+                clean_str = date_series.astype(str).str.replace(r'\s*[+-]\d{2}:?\d{2}$', '', regex=True).str.split(' ').str[0].str.strip()
+                parsed = pd.to_datetime(clean_str, format='%d/%m/%Y', errors='coerce')
+                parsed = parsed.fillna(pd.to_datetime(clean_str, format='%Y-%m-%d', errors='coerce'))
+                parsed = parsed.fillna(pd.to_datetime(clean_str, errors='coerce', dayfirst=True))
+                return parsed
+
+            # Isolate Offer rows from notes.csv (same source as Enquiries / Contact Notes).
+            if 'note_type' in df.columns:
+                self.engine.log(f"[{self.job_id}] Pre-filtering notes.csv to isolate Offers (note_type = 'Offer')...")
+                df = df[df['note_type'].astype(str).str.strip().str.lower() == 'offer'].reset_index(drop=True)
+            else:
+                self.engine.log(f"[{self.job_id}] WARNING: 'note_type' missing. Proceeding without Offer filter.")
+
+            zenu_df = pd.DataFrame(index=df.index)
+
+            for rule in rules:
+                target_field = rule.get('targetField')
+                action = rule.get('action')
+                sources = rule.get('sources', [])
+
+                primary_src_field = sources[0]['field'] if sources else None
+                if primary_src_field and primary_src_field in df.columns:
+                    safe_keys = df[primary_src_field].apply(safe_str)
+                else:
+                    safe_keys = pd.Series([''] * len(df), index=df.index)
+
+                # contact_identifier: use the CLEANED first-split identifier (_c1) from
+                # contact_cleaned.csv, consistent with Enquiries / Contact Notes / Buyer.
+                # (The raw contact_id would not match the migrated Zenu contacts.)
+                if target_field == 'contact_identifier':
+                    try:
+                        cleaned_df = pd.read_sql_query('SELECT "Raw ORIG CONTACT_IDENTIFIER", "CONTACT_IDENTIFIER" FROM "contact_cleaned.csv"', self.conn)
+                        cleaned_df['Raw ORIG CONTACT_IDENTIFIER'] = cleaned_df['Raw ORIG CONTACT_IDENTIFIER'].apply(safe_str)
+                        first_split = cleaned_df.drop_duplicates(subset=['Raw ORIG CONTACT_IDENTIFIER'], keep='first').set_index('Raw ORIG CONTACT_IDENTIFIER')['CONTACT_IDENTIFIER'].to_dict()
+                        zenu_df[target_field] = safe_keys.map(first_split).fillna('')
+                    except Exception as e:
+                        self.engine.log(f"[{self.job_id}] Lookup error for contact_identifier: {e}")
+                        zenu_df[target_field] = ''
+                    continue
+
+                # offer_date: parse the source date to dd/mm/yyyy.
+                if target_field == 'offer_date':
+                    if primary_src_field in df.columns:
+                        raw_dates = parse_au_date(df[primary_src_field])
+                        zenu_df[target_field] = raw_dates.dt.strftime('%d/%m/%Y').fillna('')
+                    else:
+                        zenu_df[target_field] = ''
+                    continue
+
+                # offer_team_member_1: resolve agent user_id -> name.
+                if target_field == 'offer_team_member_1':
+                    try:
+                        agents_df = pd.read_sql_query('SELECT user_id, name FROM "agents.csv"', self.conn)
+                        agents_df['user_id'] = agents_df['user_id'].apply(safe_str)
+                        agents_dict = agents_df.drop_duplicates(subset=['user_id']).set_index('user_id')['name'].to_dict()
+                        zenu_df[target_field] = safe_keys.apply(
+                            lambda k: str(agents_dict.get(k, '')).strip() if k != '' else ''
+                        ).replace(['nan', 'NaN', 'None'], '')
+                    except Exception as e:
+                        self.engine.log(f"[{self.job_id}] Lookup error for offer_team_member_1: {e}")
+                        zenu_df[target_field] = ''
+                    continue
+
+                # Generic handlers. Every target field is created even if the source column is
+                # absent, so the output schema always matches the mapping.
+                if action == 'direct':
+                    if primary_src_field and primary_src_field in df.columns:
+                        zenu_df[target_field] = df[primary_src_field].apply(safe_str)
+                    else:
+                        zenu_df[target_field] = ''
+
+                elif action == 'static':
+                    zenu_df[target_field] = rule.get('valueExpression', '')
+
+                elif action == 'lookup':
+                    mapped = pd.Series([''] * len(df), index=df.index)
+                    for config in rule.get('lookupConfig', []):
+                        target_file = config.get('targetFile')
+                        match_key = config.get('matchKey')
+                        extract_fields = config.get('extractFields', [])
+                        if target_file and match_key and extract_fields:
+                            try:
+                                lookup_df = pd.read_sql_query(f'SELECT "{match_key}", "{extract_fields[0]}" FROM "{target_file}"', self.conn)
+                                lookup_df[match_key] = lookup_df[match_key].apply(safe_str)
+                                mapping_dict = lookup_df.drop_duplicates(subset=[match_key], keep='first').set_index(match_key)[extract_fields[0]].to_dict()
+                                mapped = safe_keys.map(mapping_dict).fillna('')
+                            except Exception as lookup_err:
+                                self.engine.log(f"[{self.job_id}] Lookup warning for {target_field}: {lookup_err}")
+                    zenu_df[target_field] = mapped
+
+            # Drop any offer with no offer_identifier, then blank-fill.
+            zenu_df = zenu_df.replace(['nan', 'NaN', 'NAN', 'None', 'NONE', 'none', '<NA>', ''], np.nan)
+            if 'offer_identifier' in zenu_df.columns:
+                zenu_df = zenu_df.dropna(subset=['offer_identifier'])
+            zenu_df = zenu_df.fillna('')
+
+            output_file = os.path.join(self.engine.workspace, "zenu_offer.xlsx")
+            zenu_df.to_excel(output_file, index=False, engine='openpyxl')
+            zenu_df.to_sql("zenu_offer", self.conn, if_exists='replace', index=False)
+
+            self.engine.log(f"[{self.job_id}] SUCCESS: Cleaned and mapped {len(zenu_df)} Offers for Eagle.")
+        except Exception as e:
+            self.engine.log(f"[{self.job_id}] ERROR in Offer mapping: {e}")
+
+    # =========================================================================================
     # CONTACT NOTES (Untouched)
     # =========================================================================================
     def process_contact_notes(self, rules):
@@ -1393,12 +1853,9 @@ class EagleProcessor:
         
         try:
             cursor = self.conn.cursor()
-            cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{base_file}';")
-            if not cursor.fetchone():
-                self.engine.log(f"[{self.job_id}] CRITICAL: '{base_file}' table missing. Cannot process Contact Notes.")
+            df = self._load_base_table(base_file, "Contact Notes")
+            if df is None:
                 return
-
-            df = pd.read_sql_query(f'SELECT * FROM "{base_file}"', self.conn)
 
             def safe_str(x):
                 if pd.isna(x) or str(x).strip().lower() == 'nan': return ''
@@ -1418,7 +1875,7 @@ class EagleProcessor:
             self.engine.log(f"[{self.job_id}] Applying strict IN and NOT LIKE filters to notes.csv...")
             
             valid_types = [
-                'email', 'inbound sms', 'owner added to address', 'owner removed from address', 
+                'email', 'email box', 'inbound sms', 'owner added to address', 'owner removed from address', 
                 'property alert email', 'sms', 'tenant added to address', 'tenant removed from address', 
                 'unsubscribe', 'update appraisal status', 'update property status', 'websitelog'
             ]
@@ -1532,9 +1989,11 @@ class EagleProcessor:
                     try:
                         cleaned_df = pd.read_sql_query('SELECT "Raw ORIG CONTACT_IDENTIFIER", "CONTACT_IDENTIFIER" FROM "contact_cleaned.csv"', self.conn)
                         cleaned_df['Raw ORIG CONTACT_IDENTIFIER'] = cleaned_df['Raw ORIG CONTACT_IDENTIFIER'].apply(safe_str)
-                        grouped_lookup = cleaned_df.groupby('Raw ORIG CONTACT_IDENTIFIER')['CONTACT_IDENTIFIER'].apply(list).to_dict()
+                        # Keep ONLY the first split contact (e.g. _c1) and ignore _c2 onwards,
+                        # so each note maps to a single contact instead of being duplicated per split.
+                        first_split = cleaned_df.drop_duplicates(subset=['Raw ORIG CONTACT_IDENTIFIER'], keep='first').set_index('Raw ORIG CONTACT_IDENTIFIER')['CONTACT_IDENTIFIER'].to_dict()
                         
-                        zenu_df[target_field] = safe_keys.map(grouped_lookup)
+                        zenu_df[target_field] = safe_keys.map(first_split).fillna('')
                     except Exception as e:
                         self.engine.log(f"[{self.job_id}] Lookup error for contact_identifier: {e}")
                     continue
@@ -1625,12 +2084,9 @@ class EagleProcessor:
         
         try:
             cursor = self.conn.cursor()
-            cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{base_file}';")
-            if not cursor.fetchone():
-                self.engine.log(f"[{self.job_id}] CRITICAL: '{base_file}' table missing. Cannot process Property Notes.")
+            df = self._load_base_table(base_file, "Property Notes")
+            if df is None:
                 return
-
-            df = pd.read_sql_query(f'SELECT * FROM "{base_file}"', self.conn)
 
             def safe_str(x):
                 if pd.isna(x) or str(x).strip().lower() == 'nan': return ''
@@ -1648,7 +2104,7 @@ class EagleProcessor:
             # MASSIVE SQL-LIKE PRE-FILTER (Same as Contact Notes)
             # ==========================================
             valid_types = [
-                'email', 'inbound sms', 'owner added to address', 'owner removed from address', 
+                'email', 'email box', 'inbound sms', 'owner added to address', 'owner removed from address', 
                 'property alert email', 'sms', 'tenant added to address', 'tenant removed from address', 
                 'unsubscribe', 'update appraisal status', 'update property status', 'websitelog'
             ]
