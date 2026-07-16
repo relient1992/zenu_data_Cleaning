@@ -554,23 +554,45 @@ def clean_and_classify_phone(raw_num):
     s = str(raw_num)
     digits = re.sub(r'[^\d+]', '', s)
 
-    if digits.startswith('+61'): digits = '0' + digits[3:]
-    elif digits.startswith('61') and len(digits) >= 10: digits = '0' + digits[2:]
-    elif digits.startswith('0061'): digits = '0' + digits[4:]
-    
+    # --- normalisation: collapse international / stray-prefix forms to local 0... ---
+    if digits.startswith('+61'):
+        digits = '0' + digits[3:]
+    elif digits.startswith('0061'):
+        digits = '0' + digits[4:]
+    elif digits.startswith('0614') and len(digits) == 12:
+        # Stray-0 international mobile (VB ^0614\d{8}$): 0 + 61 + 4xxxxxxxx -> 04xxxxxxxx
+        digits = '0' + digits[3:]
+    elif digits.startswith('61') and len(digits) >= 10:
+        digits = '0' + digits[2:]
+
     digits = digits.replace('+', '')
     if not digits: return s, 'Invalid'
 
+    # --- mobiles ---
     if digits.startswith('04') and len(digits) == 10:
         return f"{digits[:4]} {digits[4:7]} {digits[7:]}", 'Mobile'
     elif digits.startswith('4') and len(digits) == 9:
         return f"0{digits[:3]} {digits[3:6]} {digits[6:]}", 'Mobile'
+    elif digits.startswith('64') and len(digits) == 11:
+        # NZ number (VB Validate: length 11 starting 64) -> treated as Mobile
+        return f"{digits[:2]} {digits[2:]}", 'Mobile'
 
+    # --- landlines (area-code form) ---
     elif digits.startswith('0') and len(digits) == 10 and digits[1] in '2378':
         return f"({digits[:2]}) {digits[2:6]} {digits[6:]}", 'Landline'
     elif len(digits) == 9 and digits[0] in '2378':
         return f"(0{digits[:1]}) {digits[1:5]} {digits[5:]}", 'Landline'
 
+    # --- landlines (local, no area code) ---
+    elif len(digits) == 8 and digits[0] in '23456789':
+        # 8-digit local landline (VB ^[2-9]\d{7}$)
+        return f"{digits[:1]} {digits[1:]}", 'Landline'
+    elif len(digits) == 9 and digits[0] == '0' and digits[1] in '23456789':
+        # 8-digit local landline with stray leading 0 (VB ^0[2-9]\d{7}$)
+        d = digits[1:]
+        return f"{d[:1]} {d[1:]}", 'Landline'
+
+    # --- service numbers ---
     elif (digits.startswith('1300') or digits.startswith('1800')) and len(digits) == 10:
         return f"{digits[:4]} {digits[4:7]} {digits[7:]}", 'Landline'
     elif digits.startswith('13') and len(digits) == 6:

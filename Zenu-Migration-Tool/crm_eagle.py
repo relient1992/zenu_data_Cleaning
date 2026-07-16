@@ -214,6 +214,57 @@ class EagleProcessor:
         return normalized
 
     # =========================================================================================
+    # SHARED HELPERS: PROPERTY-TYPE NORMALISATION & CATEGORY DETECTION
+    # =========================================================================================
+    def _normalize_acreage(self, series):
+        """
+        Normalise the property-type value 'Acreage/Semi-Rural' -> 'Acreage Semi-Rural'.
+        Case-insensitive, tolerant of spaces around the slash, and works even when the value
+        is one item inside a separated list (e.g. 'House, Acreage/Semi-Rural').
+        """
+        return series.astype(str).str.replace(
+            r'(?i)acreage\s*/\s*semi-rural', 'Acreage Semi-Rural', regex=True
+        )
+
+    def _detect_property_category(self, series):
+        """
+        Classify a property_type value as 'Residential', 'Commercial' or 'Rural' using the
+        Eagle->Zenu value lists. Matching is case-insensitive and uses the first item when the
+        value is a separated list. Precedence is Residential -> Commercial -> Rural, so values
+        that appear in more than one list (e.g. 'Other') resolve to Residential. Unmatched or
+        blank values return '' (left blank).
+        """
+        residential = {
+            'house', 'other', 'apartment', 'townhouse', 'vacant land', 'unit', 'flat', 'studio',
+            'villa', 'terrace', 'blockofunits', 'duplex semi-detached', 'retirement',
+            'serviced apartment', 'warehouse', 'acreage semi-rural', 'alpine'
+        }
+        commercial = {
+            'offices', 'industrial/warehouse', 'retail', 'other', 'land/development',
+            'medical/consulting', 'hotel/leisure', 'showrooms/bulky goods', 'commercial farming',
+            'parking/car space', 'serviced offices'
+        }
+        rural = {
+            'farm', 'lifestyle', 'other', 'cropping', 'dairy', 'farmlet', 'horticulture',
+            'livestock', 'mixedfarming', 'viticulture'
+        }
+
+        def categorize(v):
+            s = str(v).strip()
+            if s == '' or s.lower() in ('nan', 'none', '<na>'):
+                return ''
+            first = re.split(r'[;,]', s)[0].strip().lower()
+            if first in residential:
+                return 'Residential'
+            if first in commercial:
+                return 'Commercial'
+            if first in rural:
+                return 'Rural'
+            return ''
+
+        return series.apply(categorize)
+
+    # =========================================================================================
     # CONTACT REQUIREMENT (Untouched)
     # =========================================================================================
     def process_contact_requirement(self, rules):
@@ -384,6 +435,29 @@ class EagleProcessor:
 
                 if target_field.strip().lower() == 'contact_criteria_category':
                     zenu_df[target_field] = df['_calculated_category']
+                    continue
+
+                # contact_criteria_property_type: choose the source column by category --
+                # Rural -> bp_rural_property_types, Commercial -> bp_commercial_property_types,
+                # otherwise (Residential) -> bp_property_types. ';' is converted to ',', a leading
+                # separator is stripped, 'Acreage/Semi-Rural' -> 'Acreage Semi-Rural', and a
+                # missing value is left blank.
+                if target_field.strip().lower() == 'contact_criteria_property_type':
+                    cat = df['_calculated_category'].astype(str).str.strip().str.lower()
+
+                    def _col_or_blank(name):
+                        if name in df.columns:
+                            return df[name].astype(str).str.strip()
+                        return pd.Series([''] * len(df), index=df.index)
+
+                    selected = _col_or_blank('bp_property_types')
+                    selected = selected.mask(cat == 'commercial', _col_or_blank('bp_commercial_property_types'))
+                    selected = selected.mask(cat == 'rural', _col_or_blank('bp_rural_property_types'))
+
+                    selected = selected.str.replace(';', ',', regex=False).str.lstrip(',').str.strip()
+                    selected = selected.replace(['nan', 'NaN', 'None', '<NA>', 'NONE'], '')
+                    selected = self._normalize_acreage(selected)
+                    zenu_df[target_field] = selected
                     continue
 
                 if action == 'direct':
@@ -693,7 +767,18 @@ class EagleProcessor:
                     continue
 
                 if target_field == 'property_type' and primary_src_field in df.columns:
-                    zenu_df[target_field] = df[primary_src_field].apply(safe_str).str.replace('..', ',', regex=False)
+                    pt = df[primary_src_field].apply(safe_str).str.replace('..', ',', regex=False)
+                    pt = self._normalize_acreage(pt)
+                    zenu_df[target_field] = pt
+                    continue
+
+                # property_category: derive Residential / Commercial / Rural from property_type.
+                if target_field == 'property_category':
+                    if 'property_type' in df.columns:
+                        pt_norm = self._normalize_acreage(df['property_type'].apply(safe_str))
+                        zenu_df[target_field] = self._detect_property_category(pt_norm)
+                    else:
+                        zenu_df[target_field] = ''
                     continue
 
                 if target_field == 'property_sale_method':
@@ -898,6 +983,23 @@ class EagleProcessor:
                         zenu_df[target_field] = self._normalize_land_size_system(df[src_col])
                     else:
                         zenu_df[target_field] = ''
+                    continue
+
+                if target_field == 'property_type' and primary_src_field in df.columns:
+                    zenu_df[target_field] = self._normalize_acreage(df[primary_src_field].apply(safe_str))
+                    continue
+
+                # property_vendor_price: use max_price. Fall back to min_price when max_price is
+                # blank, OR when max_price is 0 and min_price is greater than 0.
+                if target_field == 'property_vendor_price':
+                    max_col = df['max_price'].apply(safe_str) if 'max_price' in df.columns else pd.Series([''] * len(df), index=df.index)
+                    min_col = df['min_price'].apply(safe_str) if 'min_price' in df.columns else pd.Series([''] * len(df), index=df.index)
+
+                    max_num = pd.to_numeric(max_col, errors='coerce')
+                    min_num = pd.to_numeric(min_col, errors='coerce')
+
+                    use_min = (max_col.str.strip() == '') | ((max_num == 0) & (min_num > 0))
+                    zenu_df[target_field] = max_col.where(~use_min, min_col)
                     continue
 
                 if action == 'direct':
@@ -2207,6 +2309,41 @@ class EagleProcessor:
                         zenu_df[target_field] = pd.Series(dtype=str)
                     else:
                         zenu_df[target_field] = df.apply(build_prop_note, axis=1)
+                    continue
+
+                # property_identifier: a single note can link to property_id, appraisal_id and/or
+                # address_id. Emit one identifier per non-empty link (property_id as-is,
+                # appraisal_id prefixed 'Appr_', address_id prefixed 'Pr_'). The list is exploded
+                # later, so one note can produce up to 3 rows. Notes with no link at all still
+                # produce a single row (blank identifier).
+                #
+                # NOTE: the list column is built explicitly (not via df.apply(axis=1)) because
+                # apply can collapse uniform-length lists into separate columns on some pandas
+                # versions, which would silently defeat the explode and produce only one row.
+                if target_field == 'property_identifier':
+                    def _col(name):
+                        if name in df.columns:
+                            return df[name].apply(safe_str).tolist()
+                        return [''] * len(df)
+
+                    pid_vals = _col('property_id')
+                    aid_vals = _col('appraisal_id')
+                    addr_vals = _col('address_id')
+
+                    id_lists = []
+                    for pid, aid, addrid in zip(pid_vals, aid_vals, addr_vals):
+                        ids = []
+                        if pid:
+                            ids.append(pid)
+                        if aid:
+                            ids.append(f"Appr_{aid}")
+                        if addrid:
+                            ids.append(f"Pr_{addrid}")
+                        if not ids:
+                            ids = ['']          # still show the row even with no property link
+                        id_lists.append(ids)
+
+                    zenu_df[target_field] = pd.Series(id_lists, index=df.index, dtype=object)
                     continue
 
                 if action == 'direct':
