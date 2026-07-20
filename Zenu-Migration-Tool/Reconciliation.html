@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zenu Migration - Reconciliation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #0B1120; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    </style>
+    <script>
+        tailwind.config = {
+            theme: { extend: { colors: { app: {
+                bg: '#0B1120', card: '#0F172A', border: '#1E293B', hover: '#1E293B'
+            } } } }
+        }
+    </script>
+</head>
+<body class="bg-app-bg text-slate-300 min-h-screen font-sans selection:bg-indigo-500/30">
+
+    <div class="max-w-6xl mx-auto p-6 space-y-6">
+
+        <!-- Header -->
+        <div class="flex items-center justify-between border-b border-app-border pb-4">
+            <div>
+                <h1 class="text-xl font-bold text-white">Post-Migration Reconciliation</h1>
+                <p class="text-sm text-slate-500">Validate output files against the source data before client sign-off.</p>
+            </div>
+            <a href="index.html" class="text-xs text-indigo-400 hover:text-indigo-300">&larr; Back to Migration Platform</a>
+        </div>
+
+        <!-- Job picker -->
+        <div class="bg-app-card border border-app-border rounded-lg p-4 flex flex-wrap items-end gap-3">
+            <div class="flex-1 min-w-[220px]">
+                <label class="block text-xs text-slate-500 mb-1">Migration Job</label>
+                <select id="jobSelect" class="w-full bg-app-bg border border-app-border rounded px-3 py-2 text-sm focus:outline-none focus:border-indigo-500"></select>
+            </div>
+            <button onclick="runRecon()" id="runBtn"
+                class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold px-4 py-2 rounded transition">
+                Run Reconciliation
+            </button>
+            <button onclick="loadReport()" 
+                class="bg-app-hover hover:bg-slate-700 text-slate-300 text-sm px-4 py-2 rounded transition">
+                Refresh
+            </button>
+            <button onclick="downloadReport()" id="dlBtn"
+                class="hidden bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold px-4 py-2 rounded transition">
+                Download Excel Report
+            </button>
+        </div>
+
+        <!-- Status banner -->
+        <div id="statusBanner" class="hidden rounded-lg p-4 border text-sm font-semibold"></div>
+
+        <!-- Summary cards -->
+        <div id="summaryCards" class="hidden grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div class="bg-app-card border border-app-border rounded-lg p-4">
+                <div class="text-xs text-slate-500 uppercase">Overall</div>
+                <div id="cardOverall" class="text-2xl font-bold mt-1">-</div>
+            </div>
+            <div class="bg-app-card border border-app-border rounded-lg p-4">
+                <div class="text-xs text-slate-500 uppercase">Failures</div>
+                <div id="cardFails" class="text-2xl font-bold mt-1 text-rose-400">-</div>
+            </div>
+            <div class="bg-app-card border border-app-border rounded-lg p-4">
+                <div class="text-xs text-slate-500 uppercase">Warnings</div>
+                <div id="cardWarns" class="text-2xl font-bold mt-1 text-amber-400">-</div>
+            </div>
+            <div class="bg-app-card border border-app-border rounded-lg p-4">
+                <div class="text-xs text-slate-500 uppercase">Generated</div>
+                <div id="cardTime" class="text-sm font-semibold mt-2 text-slate-300">-</div>
+            </div>
+        </div>
+
+        <!-- Issues -->
+        <div id="issuesSection" class="hidden bg-app-card border border-app-border rounded-lg">
+            <div class="px-4 py-3 border-b border-app-border text-sm font-semibold text-white">Issues</div>
+            <div class="p-4 overflow-x-auto">
+                <table class="w-full text-sm text-left">
+                    <thead class="text-xs text-slate-500 uppercase border-b border-app-border">
+                        <tr><th class="py-2 pr-4">Severity</th><th class="py-2 pr-4">Area</th><th class="py-2">Detail</th></tr>
+                    </thead>
+                    <tbody id="issuesBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Row counts side by side -->
+        <div id="countsSection" class="hidden grid md:grid-cols-2 gap-4">
+            <div class="bg-app-card border border-app-border rounded-lg">
+                <div class="px-4 py-3 border-b border-app-border text-sm font-semibold text-white">Source Tables (SQLite)</div>
+                <div class="p-4 max-h-72 overflow-y-auto">
+                    <table class="w-full text-sm text-left">
+                        <thead class="text-xs text-slate-500 uppercase border-b border-app-border">
+                            <tr><th class="py-2 pr-4">Table</th><th class="py-2 text-right">Rows</th></tr>
+                        </thead>
+                        <tbody id="sourceBody"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="bg-app-card border border-app-border rounded-lg">
+                <div class="px-4 py-3 border-b border-app-border text-sm font-semibold text-white">Output Groups</div>
+                <div class="p-4 max-h-72 overflow-y-auto">
+                    <table class="w-full text-sm text-left">
+                        <thead class="text-xs text-slate-500 uppercase border-b border-app-border">
+                            <tr><th class="py-2 pr-4">Output</th><th class="py-2 text-right pr-4">Files</th><th class="py-2 text-right">Rows</th></tr>
+                        </thead>
+                        <tbody id="outputBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Orphans & duplicates -->
+        <div id="integritySection" class="hidden grid md:grid-cols-2 gap-4">
+            <div class="bg-app-card border border-app-border rounded-lg">
+                <div class="px-4 py-3 border-b border-app-border text-sm font-semibold text-white">Orphaned Relationships</div>
+                <div class="p-4 max-h-72 overflow-y-auto text-sm" id="orphansBody"></div>
+            </div>
+            <div class="bg-app-card border border-app-border rounded-lg">
+                <div class="px-4 py-3 border-b border-app-border text-sm font-semibold text-white">Duplicate Identifiers</div>
+                <div class="p-4 max-h-72 overflow-y-auto text-sm" id="dupsBody"></div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const API = "http://127.0.0.1:8000";
+        let pollTimer = null;
+
+        async function loadJobs() {
+            try {
+                const res = await fetch(`${API}/api/jobs`);
+                const data = await res.json();
+                const sel = document.getElementById("jobSelect");
+                sel.innerHTML = "";
+                (data.data || []).forEach(j => {
+                    const opt = document.createElement("option");
+                    opt.value = j.job_id;
+                    opt.textContent = `${j.job_id}  (${j.modified})${j.has_report ? "  [report available]" : ""}`;
+                    sel.appendChild(opt);
+                });
+                if (sel.options.length === 0) {
+                    sel.innerHTML = `<option value="">No migration jobs found</option>`;
+                }
+            } catch (e) {
+                console.error("Failed to load jobs", e);
+            }
+        }
+
+        async function runRecon() {
+            const jobId = document.getElementById("jobSelect").value;
+            if (!jobId) return;
+            const btn = document.getElementById("runBtn");
+            btn.disabled = true;
+            btn.textContent = "Running...";
+            try {
+                await fetch(`${API}/api/reconcile/${jobId}`, { method: "POST" });
+                if (pollTimer) clearInterval(pollTimer);
+                pollTimer = setInterval(loadReport, 2500);
+            } catch (e) {
+                console.error(e);
+                btn.disabled = false;
+                btn.textContent = "Run Reconciliation";
+            }
+        }
+
+        function banner(text, cls) {
+            const b = document.getElementById("statusBanner");
+            b.className = `rounded-lg p-4 border text-sm font-semibold ${cls}`;
+            b.textContent = text;
+            b.classList.remove("hidden");
+        }
+
+        async function loadReport() {
+            const jobId = document.getElementById("jobSelect").value;
+            if (!jobId) return;
+            try {
+                const res = await fetch(`${API}/api/reconcile-report/${jobId}`);
+                const d = await res.json();
+
+                if (d.status === "not_found") {
+                    banner("No reconciliation report exists for this job yet. Click Run Reconciliation.",
+                        "bg-slate-800/40 border-app-border text-slate-400");
+                    return;
+                }
+                if (d.status === "running") {
+                    banner("Reconciliation in progress... this page refreshes automatically.",
+                        "bg-indigo-900/20 border-indigo-500/30 text-indigo-300");
+                    return;
+                }
+                if (d.status === "error") {
+                    banner(`Reconciliation failed: ${d.message}`,
+                        "bg-rose-900/20 border-rose-500/30 text-rose-300");
+                    stopPolling();
+                    return;
+                }
+
+                stopPolling();
+                renderReport(d);
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        function stopPolling() {
+            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+            const btn = document.getElementById("runBtn");
+            btn.disabled = false;
+            btn.textContent = "Run Reconciliation";
+        }
+
+        function renderReport(d) {
+            const colors = {
+                PASS: ["bg-emerald-900/20 border-emerald-500/30 text-emerald-300", "text-emerald-400"],
+                WARN: ["bg-amber-900/20 border-amber-500/30 text-amber-300", "text-amber-400"],
+                FAIL: ["bg-rose-900/20 border-rose-500/30 text-rose-300", "text-rose-400"]
+            };
+            const c = colors[d.overall] || colors.WARN;
+            banner(`Overall Result: ${d.overall} - ${d.fail_count} failure(s), ${d.warn_count} warning(s)`, c[0]);
+
+            document.getElementById("summaryCards").classList.remove("hidden");
+            const overall = document.getElementById("cardOverall");
+            overall.textContent = d.overall;
+            overall.className = `text-2xl font-bold mt-1 ${c[1]}`;
+            document.getElementById("cardFails").textContent = d.fail_count;
+            document.getElementById("cardWarns").textContent = d.warn_count;
+            document.getElementById("cardTime").textContent = d.generated;
+            document.getElementById("dlBtn").classList.remove("hidden");
+
+            // Issues
+            const sevBadge = {
+                FAIL: "bg-rose-500/15 text-rose-400 border border-rose-500/30",
+                WARN: "bg-amber-500/15 text-amber-400 border border-amber-500/30",
+                PASS: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+            };
+            const issuesBody = document.getElementById("issuesBody");
+            issuesBody.innerHTML = "";
+            const issues = (d.issues && d.issues.length) ? d.issues :
+                [{severity: "PASS", area: "-", detail: "No issues detected."}];
+            issues.forEach(i => {
+                issuesBody.innerHTML += `<tr class="border-b border-app-border/50">
+                    <td class="py-2 pr-4"><span class="px-2 py-0.5 rounded text-xs font-semibold ${sevBadge[i.severity] || ''}">${i.severity}</span></td>
+                    <td class="py-2 pr-4 text-slate-400">${i.area}</td>
+                    <td class="py-2">${i.detail}</td></tr>`;
+            });
+            document.getElementById("issuesSection").classList.remove("hidden");
+
+            // Counts
+            const srcBody = document.getElementById("sourceBody");
+            srcBody.innerHTML = "";
+            (d.source_counts || []).forEach(s => {
+                srcBody.innerHTML += `<tr class="border-b border-app-border/50">
+                    <td class="py-1.5 pr-4">${s.table}</td>
+                    <td class="py-1.5 text-right font-mono">${s.rows.toLocaleString()}</td></tr>`;
+            });
+            const outBody = document.getElementById("outputBody");
+            outBody.innerHTML = "";
+            (d.row_counts || []).forEach(o => {
+                const zero = o.rows === 0 ? "text-rose-400 font-semibold" : "";
+                outBody.innerHTML += `<tr class="border-b border-app-border/50 ${zero}">
+                    <td class="py-1.5 pr-4">${o.output_group}</td>
+                    <td class="py-1.5 text-right pr-4 font-mono">${o.files}</td>
+                    <td class="py-1.5 text-right font-mono">${o.rows.toLocaleString()}</td></tr>`;
+            });
+            document.getElementById("countsSection").classList.remove("hidden");
+
+            // Orphans / dups
+            const orphansBody = document.getElementById("orphansBody");
+            orphansBody.innerHTML = (d.orphans && d.orphans.length)
+                ? d.orphans.map(o => `<div class="mb-3 pb-3 border-b border-app-border/50">
+                    <div class="font-semibold text-rose-400">${o.output_group}</div>
+                    <div class="text-slate-400 text-xs mt-1">${o.orphan_rows.toLocaleString()} rows / ${o.orphan_unique.toLocaleString()} unique ${o.identifier} values missing from master '${o.master}'</div>
+                    <div class="text-slate-500 text-xs mt-1 font-mono break-all">e.g. ${o.sample}</div></div>`).join("")
+                : `<div class="text-emerald-400 text-sm">No orphaned relationships detected.</div>`;
+
+            const dupsBody = document.getElementById("dupsBody");
+            dupsBody.innerHTML = (d.duplicates && d.duplicates.length)
+                ? d.duplicates.map(x => `<div class="mb-3 pb-3 border-b border-app-border/50">
+                    <div class="font-semibold text-rose-400">${x.output_group}</div>
+                    <div class="text-slate-400 text-xs mt-1">${x.duplicate_values.toLocaleString()} duplicated ${x.identifier} values (${x.extra_rows.toLocaleString()} extra rows)</div>
+                    <div class="text-slate-500 text-xs mt-1 font-mono break-all">e.g. ${x.sample}</div></div>`).join("")
+                : `<div class="text-emerald-400 text-sm">No duplicate identifiers in master files.</div>`;
+            document.getElementById("integritySection").classList.remove("hidden");
+        }
+
+        function downloadReport() {
+            const jobId = document.getElementById("jobSelect").value;
+            if (jobId) window.open(`${API}/api/reconcile-download/${jobId}`, "_blank");
+        }
+
+        loadJobs();
+        document.getElementById("jobSelect").addEventListener("change", () => {
+            document.getElementById("statusBanner").classList.add("hidden");
+            document.getElementById("summaryCards").classList.add("hidden");
+            document.getElementById("issuesSection").classList.add("hidden");
+            document.getElementById("countsSection").classList.add("hidden");
+            document.getElementById("integritySection").classList.add("hidden");
+            document.getElementById("dlBtn").classList.add("hidden");
+            loadReport();
+        });
+    </script>
+</body>
+</html>

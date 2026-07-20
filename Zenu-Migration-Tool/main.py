@@ -1,6 +1,6 @@
 from fastapi import FastAPI, File, UploadFile, BackgroundTasks, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
 from datetime import datetime
 import shutil
@@ -11,6 +11,12 @@ import sqlite3
 
 # Import our custom engine
 from etl_engine import MigrationEngine
+
+# NEW: Reconciliation engine
+from reconciliation import ReconciliationEngine
+
+# NEW: Job tracker router
+from job_tracker import tracker_router
 
 app = FastAPI(title="Zenu Migration API")
 
@@ -25,8 +31,11 @@ app.add_middleware(
 UPLOAD_DIR = "client_migrations"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+# NEW: Migration Job Tracker (see job_tracker.py)
+app.include_router(tracker_router)
+
 # ==========================================
-# NEW: ROADMAP DATABASE SETUP
+# ROADMAP DATABASE SETUP
 # ==========================================
 ROADMAP_DB_DIR = r"C:\Users\Daryl\OneDrive - Zenu Realestate Pty Ltd\Documents\sql"
 os.makedirs(ROADMAP_DB_DIR, exist_ok=True)
@@ -142,3 +151,63 @@ def process_job(job_id: str, workspace: str, json_path: str, source_crm: str, ch
         engine.log(f"[{job_id}] CRITICAL SYSTEM FAILURE: {str(e)}")
     finally:
         engine.close()
+
+# ==========================================
+# NEW: POST-MIGRATION RECONCILIATION ENDPOINTS
+# ==========================================
+
+def run_reconciliation_job(job_id: str, workspace: str):
+    """Background task wrapper for the reconciliation engine."""
+    recon = ReconciliationEngine(job_id=job_id, workspace=workspace)
+    recon.run()
+
+@app.get("/api/jobs")
+def list_jobs():
+    """List all migration job workspaces so the recon page can pick one."""
+    jobs = []
+    if os.path.exists(UPLOAD_DIR):
+        for name in sorted(os.listdir(UPLOAD_DIR), reverse=True):
+            ws = os.path.join(UPLOAD_DIR, name)
+            if os.path.isdir(ws):
+                has_report = os.path.exists(os.path.join(ws, "reconciliation_summary.json"))
+                modified = datetime.fromtimestamp(os.path.getmtime(ws)).strftime("%d/%m/%Y %H:%M")
+                jobs.append({"job_id": name, "modified": modified, "has_report": has_report})
+    return {"status": "success", "data": jobs}
+
+@app.post("/api/reconcile/{job_id}")
+async def start_reconciliation(job_id: str, background_tasks: BackgroundTasks):
+    """Kick off reconciliation for a completed migration job."""
+    workspace = os.path.join(UPLOAD_DIR, job_id)
+    if not os.path.isdir(workspace):
+        return JSONResponse(status_code=404, content={
+            "status": "error", "message": f"Job workspace '{job_id}' not found."})
+
+    # Mark as pending so the UI can poll while it runs
+    pending_path = os.path.join(workspace, "reconciliation_summary.json")
+    with open(pending_path, "w", encoding="utf-8") as f:
+        json.dump({"status": "running", "job_id": job_id}, f)
+
+    background_tasks.add_task(run_reconciliation_job, job_id, workspace)
+    return {"status": "success", "job_id": job_id,
+            "message": "Reconciliation started. Poll /api/reconcile-report/{job_id}."}
+
+@app.get("/api/reconcile-report/{job_id}")
+async def get_reconciliation_report(job_id: str):
+    """Return the JSON summary of the reconciliation (or its running state)."""
+    summary_path = os.path.join(UPLOAD_DIR, job_id, "reconciliation_summary.json")
+    if not os.path.exists(summary_path):
+        return JSONResponse(content={"status": "not_found", "job_id": job_id})
+    with open(summary_path, "r", encoding="utf-8") as f:
+        return JSONResponse(content=json.load(f))
+
+@app.get("/api/reconcile-download/{job_id}")
+async def download_reconciliation_report(job_id: str):
+    """Download the client-shareable Excel reconciliation report."""
+    report_path = os.path.join(UPLOAD_DIR, job_id, "Reconciliation_Report.xlsx")
+    if not os.path.exists(report_path):
+        return JSONResponse(status_code=404, content={
+            "status": "error", "message": "Report not generated yet."})
+    return FileResponse(
+        report_path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=f"Reconciliation_Report_{job_id}.xlsx")

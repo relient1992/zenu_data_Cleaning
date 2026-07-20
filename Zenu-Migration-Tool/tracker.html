@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zenu Migration - Job Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #0B1120; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    </style>
+    <script>
+        tailwind.config = {
+            theme: { extend: { colors: { app: {
+                bg: '#0B1120', card: '#0F172A', border: '#1E293B', hover: '#1E293B'
+            } } } }
+        }
+    </script>
+</head>
+<body class="bg-app-bg text-slate-300 min-h-screen font-sans selection:bg-indigo-500/30">
+
+<div class="max-w-7xl mx-auto p-6 space-y-6">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between border-b border-app-border pb-4">
+        <div>
+            <h1 class="text-xl font-bold text-white">Migration Job Tracker</h1>
+            <p class="text-sm text-slate-500">One record per client migration: entity progress, issues log, and sign-off trail.</p>
+        </div>
+        <div class="flex items-center gap-4">
+            <a href="reconciliation.html" class="text-xs text-indigo-400 hover:text-indigo-300">Reconciliation</a>
+            <a href="index.html" class="text-xs text-indigo-400 hover:text-indigo-300">&larr; Migration Platform</a>
+            <button onclick="openMigModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold px-4 py-2 rounded transition">+ New Migration</button>
+        </div>
+    </div>
+
+    <div class="grid lg:grid-cols-5 gap-6">
+
+        <!-- LEFT: migration list -->
+        <div class="lg:col-span-2 bg-app-card border border-app-border rounded-lg overflow-hidden">
+            <div class="px-4 py-3 border-b border-app-border text-sm font-semibold text-white flex justify-between items-center">
+                <span>Migrations</span>
+                <button onclick="loadMigrations()" class="text-xs text-slate-500 hover:text-slate-300">Refresh</button>
+            </div>
+            <div id="migList" class="max-h-[70vh] overflow-y-auto divide-y divide-app-border/60"></div>
+        </div>
+
+        <!-- RIGHT: detail -->
+        <div class="lg:col-span-3 space-y-4">
+            <div id="detailEmpty" class="bg-app-card border border-app-border rounded-lg p-10 text-center text-slate-500 text-sm">
+                Select a migration on the left to see its entity progress and issues.
+            </div>
+
+            <div id="detailPanel" class="hidden space-y-4">
+
+                <!-- Migration header card -->
+                <div class="bg-app-card border border-app-border rounded-lg p-4">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <div id="dClient" class="text-lg font-bold text-white"></div>
+                            <div id="dMeta" class="text-xs text-slate-500 mt-1"></div>
+                            <div id="dNotes" class="text-sm text-slate-400 mt-2"></div>
+                        </div>
+                        <div class="flex gap-2">
+                            <button onclick="syncRecon()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3 py-1.5 rounded transition">Sync from Recon</button>
+                            <button onclick="openMigModal(currentDetail.migration)" class="bg-app-hover hover:bg-slate-700 text-xs px-3 py-1.5 rounded transition">Edit</button>
+                            <button onclick="deleteMigration()" class="bg-rose-900/40 hover:bg-rose-800/60 text-rose-300 text-xs px-3 py-1.5 rounded transition">Delete</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Entities -->
+                <div class="bg-app-card border border-app-border rounded-lg">
+                    <div class="px-4 py-3 border-b border-app-border text-sm font-semibold text-white flex justify-between items-center">
+                        <span>Entity Progress</span>
+                        <button onclick="addEntityPrompt()" class="text-xs text-indigo-400 hover:text-indigo-300">+ Add entity</button>
+                    </div>
+                    <div class="p-4 overflow-x-auto">
+                        <table class="w-full text-sm text-left">
+                            <thead class="text-xs text-slate-500 uppercase border-b border-app-border">
+                                <tr><th class="py-2 pr-4">Entity</th><th class="py-2 pr-4">Status</th><th class="py-2 pr-4 text-right">Rows</th><th class="py-2"></th></tr>
+                            </thead>
+                            <tbody id="entityBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Issues -->
+                <div class="bg-app-card border border-app-border rounded-lg">
+                    <div class="px-4 py-3 border-b border-app-border text-sm font-semibold text-white flex justify-between items-center">
+                        <span>Issues Log</span>
+                        <button onclick="addIssuePrompt()" class="text-xs text-indigo-400 hover:text-indigo-300">+ Log issue</button>
+                    </div>
+                    <div id="issueList" class="p-4 space-y-3 max-h-96 overflow-y-auto"></div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Migration create/edit modal -->
+<div id="migModal" class="fixed inset-0 bg-black/60 hidden items-center justify-center z-50 backdrop-blur-sm">
+    <div class="bg-app-card border border-app-border rounded-lg w-full max-w-lg p-6 space-y-4">
+        <h2 id="migModalTitle" class="text-white font-bold">New Migration</h2>
+        <input type="hidden" id="mId">
+        <div class="grid grid-cols-2 gap-3">
+            <div class="col-span-2">
+                <label class="block text-xs text-slate-500 mb-1">Client Name *</label>
+                <input id="mClient" class="w-full bg-app-bg border border-app-border rounded px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+            </div>
+            <div>
+                <label class="block text-xs text-slate-500 mb-1">Source CRM</label>
+                <select id="mSource" class="w-full bg-app-bg border border-app-border rounded px-3 py-2 text-sm">
+                    <option>Agentbox</option><option>VaultRE</option><option>Eagle</option>
+                    <option>Zenu</option><option>Rex</option><option>MailingProspect</option><option>Other</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs text-slate-500 mb-1">Status</label>
+                <select id="mStatus" class="w-full bg-app-bg border border-app-border rounded px-3 py-2 text-sm"></select>
+            </div>
+            <div>
+                <label class="block text-xs text-slate-500 mb-1">Linked Job ID</label>
+                <select id="mJob" class="w-full bg-app-bg border border-app-border rounded px-3 py-2 text-sm"></select>
+            </div>
+            <div>
+                <label class="block text-xs text-slate-500 mb-1">Due Date (dd/mm/yyyy)</label>
+                <input id="mDue" class="w-full bg-app-bg border border-app-border rounded px-3 py-2 text-sm">
+            </div>
+            <div class="col-span-2">
+                <label class="block text-xs text-slate-500 mb-1">Assigned To</label>
+                <input id="mAssigned" class="w-full bg-app-bg border border-app-border rounded px-3 py-2 text-sm">
+            </div>
+            <div class="col-span-2">
+                <label class="block text-xs text-slate-500 mb-1">Notes</label>
+                <textarea id="mNotes" rows="2" class="w-full bg-app-bg border border-app-border rounded px-3 py-2 text-sm"></textarea>
+            </div>
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+            <button onclick="closeMigModal()" class="text-sm px-4 py-2 rounded bg-app-hover hover:bg-slate-700">Cancel</button>
+            <button onclick="saveMigration()" class="text-sm px-4 py-2 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-semibold">Save</button>
+        </div>
+    </div>
+</div>
+
+<script>
+const API = "http://127.0.0.1:8000";
+let ENTITY_STATUSES = [], MIGRATION_STATUSES = [];
+let currentDetail = null;
+
+const statusColors = {
+    "Not Started": "bg-slate-500/15 text-slate-400 border-slate-500/30",
+    "In Progress": "bg-indigo-500/15 text-indigo-400 border-indigo-500/30",
+    "QA": "bg-amber-500/15 text-amber-400 border-amber-500/30",
+    "Client Review": "bg-cyan-500/15 text-cyan-400 border-cyan-500/30",
+    "Signed Off": "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+    "On Hold": "bg-rose-500/15 text-rose-400 border-rose-500/30"
+};
+
+async function loadMeta() {
+    const d = await (await fetch(`${API}/api/tracker/meta`)).json();
+    MIGRATION_STATUSES = d.migration_statuses;
+    ENTITY_STATUSES = d.entity_statuses;
+    const sel = document.getElementById("mStatus");
+    sel.innerHTML = MIGRATION_STATUSES.map(s => `<option>${s}</option>`).join("");
+}
+
+async function loadJobsDropdown() {
+    const sel = document.getElementById("mJob");
+    sel.innerHTML = `<option value="">(none)</option>`;
+    try {
+        const d = await (await fetch(`${API}/api/jobs`)).json();
+        (d.data || []).forEach(j => {
+            sel.innerHTML += `<option value="${j.job_id}">${j.job_id}${j.has_report ? " [recon done]" : ""}</option>`;
+        });
+    } catch (e) { /* jobs endpoint optional */ }
+}
+
+async function loadMigrations() {
+    const d = await (await fetch(`${API}/api/tracker/migrations`)).json();
+    const list = document.getElementById("migList");
+    list.innerHTML = "";
+    if (!d.data.length) {
+        list.innerHTML = `<div class="p-6 text-sm text-slate-500 text-center">No migrations yet. Create one to get started.</div>`;
+        return;
+    }
+    d.data.forEach(m => {
+        const c = statusColors[m.status] || statusColors["Not Started"];
+        const pct = m.entity_count ? Math.round(m.entities_done / m.entity_count * 100) : 0;
+        list.innerHTML += `
+        <div onclick="openDetail(${m.id})" class="p-4 hover:bg-app-hover cursor-pointer transition">
+            <div class="flex justify-between items-center">
+                <div class="font-semibold text-white">${m.client_name}</div>
+                <span class="px-2 py-0.5 rounded text-[10px] font-semibold border ${c}">${m.status}</span>
+            </div>
+            <div class="text-xs text-slate-500 mt-1">${m.source_crm || "?"} &rarr; ${m.target_crm || "Zenu"}${m.job_id ? ` &middot; ${m.job_id}` : ""}${m.due_date ? ` &middot; due ${m.due_date}` : ""}</div>
+            <div class="flex items-center gap-3 mt-2">
+                <div class="flex-1 h-1.5 bg-app-bg rounded overflow-hidden">
+                    <div class="h-full bg-gradient-to-r from-indigo-500 to-emerald-400" style="width:${pct}%"></div>
+                </div>
+                <span class="text-[10px] text-slate-500">${m.entities_done}/${m.entity_count} entities</span>
+                ${m.open_issues ? `<span class="text-[10px] text-rose-400 font-semibold">${m.open_issues} open issue(s)</span>` : ""}
+            </div>
+        </div>`;
+    });
+}
+
+async function openDetail(id) {
+    const d = await (await fetch(`${API}/api/tracker/migrations/${id}`)).json();
+    if (d.status !== "success") return;
+    currentDetail = d.data;
+    const m = d.data.migration;
+
+    document.getElementById("detailEmpty").classList.add("hidden");
+    document.getElementById("detailPanel").classList.remove("hidden");
+    document.getElementById("dClient").textContent = m.client_name;
+    document.getElementById("dMeta").textContent =
+        `${m.source_crm || "?"} → ${m.target_crm || "Zenu"}` +
+        (m.job_id ? ` · Job: ${m.job_id}` : " · No job linked") +
+        (m.assigned_to ? ` · ${m.assigned_to}` : "") +
+        (m.due_date ? ` · Due ${m.due_date}` : "");
+    document.getElementById("dNotes").textContent = m.notes || "";
+
+    // entities
+    const eb = document.getElementById("entityBody");
+    eb.innerHTML = "";
+    if (!d.data.entities.length) {
+        eb.innerHTML = `<tr><td colspan="4" class="py-3 text-slate-500 text-center text-xs">No entities yet - add manually or use "Sync from Recon".</td></tr>`;
+    }
+    d.data.entities.forEach(e => {
+        const opts = ENTITY_STATUSES.map(s => `<option ${s === e.status ? "selected" : ""}>${s}</option>`).join("");
+        eb.innerHTML += `<tr class="border-b border-app-border/50">
+            <td class="py-2 pr-4">${e.entity_name}</td>
+            <td class="py-2 pr-4">
+                <select onchange="updateEntityStatus('${e.entity_name.replace(/'/g, "\\'")}', this.value)"
+                    class="bg-app-bg border border-app-border rounded px-2 py-1 text-xs">${opts}</select>
+            </td>
+            <td class="py-2 pr-4 text-right font-mono">${e.row_count != null ? e.row_count.toLocaleString() : "-"}</td>
+            <td class="py-2 text-right"><button onclick="deleteEntity(${e.id})" class="text-slate-600 hover:text-rose-400 text-xs">remove</button></td>
+        </tr>`;
+    });
+
+    // issues
+    const il = document.getElementById("issueList");
+    il.innerHTML = "";
+    if (!d.data.issues.length) {
+        il.innerHTML = `<div class="text-sm text-emerald-400">No issues logged.</div>`;
+    }
+    const sevC = { FAIL: "text-rose-400 border-rose-500/30 bg-rose-500/10",
+                   WARN: "text-amber-400 border-amber-500/30 bg-amber-500/10",
+                   INFO: "text-slate-400 border-slate-500/30 bg-slate-500/10" };
+    d.data.issues.forEach(i => {
+        const resolved = i.status === "Resolved";
+        il.innerHTML += `
+        <div class="border border-app-border rounded p-3 ${resolved ? "opacity-50" : ""}">
+            <div class="flex justify-between items-start gap-3">
+                <div>
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold border ${sevC[i.severity] || sevC.INFO}">${i.severity}</span>
+                    <span class="text-sm ml-2 ${resolved ? "line-through" : "text-white"}">${i.title}</span>
+                    ${i.detail ? `<div class="text-xs text-slate-500 mt-1">${i.detail}</div>` : ""}
+                </div>
+                <div class="flex gap-2 shrink-0">
+                    <button onclick="toggleIssue(${i.id})" class="text-xs ${resolved ? "text-slate-500" : "text-emerald-400"} hover:underline">${resolved ? "Reopen" : "Resolve"}</button>
+                    <button onclick="deleteIssue(${i.id})" class="text-xs text-slate-600 hover:text-rose-400">del</button>
+                </div>
+            </div>
+        </div>`;
+    });
+}
+
+// ---------- actions ----------
+function openMigModal(mig = null) {
+    loadJobsDropdown().then(() => {
+        document.getElementById("migModalTitle").textContent = mig ? "Edit Migration" : "New Migration";
+        document.getElementById("mId").value = mig ? mig.id : "";
+        document.getElementById("mClient").value = mig ? mig.client_name : "";
+        document.getElementById("mSource").value = mig?.source_crm || "Agentbox";
+        document.getElementById("mStatus").value = mig?.status || "Not Started";
+        document.getElementById("mDue").value = mig?.due_date || "";
+        document.getElementById("mAssigned").value = mig?.assigned_to || "";
+        document.getElementById("mNotes").value = mig?.notes || "";
+        setTimeout(() => { document.getElementById("mJob").value = mig?.job_id || ""; }, 150);
+        const modal = document.getElementById("migModal");
+        modal.classList.remove("hidden"); modal.classList.add("flex");
+    });
+}
+function closeMigModal() {
+    const modal = document.getElementById("migModal");
+    modal.classList.add("hidden"); modal.classList.remove("flex");
+}
+async function saveMigration() {
+    const idVal = document.getElementById("mId").value;
+    const body = {
+        id: idVal ? parseInt(idVal) : null,
+        client_name: document.getElementById("mClient").value.trim(),
+        source_crm: document.getElementById("mSource").value,
+        status: document.getElementById("mStatus").value,
+        job_id: document.getElementById("mJob").value || null,
+        due_date: document.getElementById("mDue").value || null,
+        assigned_to: document.getElementById("mAssigned").value || null,
+        notes: document.getElementById("mNotes").value || null
+    };
+    if (!body.client_name) return alert("Client name is required.");
+    const r = await (await fetch(`${API}/api/tracker/migrations`, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(body)})).json();
+    closeMigModal();
+    await loadMigrations();
+    if (r.id) openDetail(r.id);
+}
+async function deleteMigration() {
+    if (!currentDetail) return;
+    if (!confirm(`Delete migration '${currentDetail.migration.client_name}' and all its entities/issues?`)) return;
+    await fetch(`${API}/api/tracker/migrations/${currentDetail.migration.id}`, { method: "DELETE" });
+    currentDetail = null;
+    document.getElementById("detailPanel").classList.add("hidden");
+    document.getElementById("detailEmpty").classList.remove("hidden");
+    loadMigrations();
+}
+async function syncRecon() {
+    if (!currentDetail) return;
+    const r = await (await fetch(`${API}/api/tracker/migrations/${currentDetail.migration.id}/sync`, { method: "POST" })).json();
+    alert(r.message);
+    openDetail(currentDetail.migration.id);
+    loadMigrations();
+}
+async function updateEntityStatus(name, status) {
+    await fetch(`${API}/api/tracker/entities`, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ migration_id: currentDetail.migration.id, entity_name: name, status })});
+    loadMigrations();
+}
+async function addEntityPrompt() {
+    const name = prompt("Entity name (e.g. Contacts, Prospects, Appraisals):");
+    if (!name) return;
+    await fetch(`${API}/api/tracker/entities`, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ migration_id: currentDetail.migration.id, entity_name: name.trim() })});
+    openDetail(currentDetail.migration.id); loadMigrations();
+}
+async function deleteEntity(id) {
+    await fetch(`${API}/api/tracker/entities/${id}`, { method: "DELETE" });
+    openDetail(currentDetail.migration.id); loadMigrations();
+}
+async function addIssuePrompt() {
+    const title = prompt("Issue title:");
+    if (!title) return;
+    const detail = prompt("Detail (optional):") || null;
+    const severity = (prompt("Severity - FAIL / WARN / INFO:", "WARN") || "WARN").toUpperCase();
+    await fetch(`${API}/api/tracker/issues`, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ migration_id: currentDetail.migration.id, title: title.trim(), detail, severity })});
+    openDetail(currentDetail.migration.id); loadMigrations();
+}
+async function toggleIssue(id) {
+    await fetch(`${API}/api/tracker/issues/${id}/toggle`, { method: "PATCH" });
+    openDetail(currentDetail.migration.id); loadMigrations();
+}
+async function deleteIssue(id) {
+    await fetch(`${API}/api/tracker/issues/${id}`, { method: "DELETE" });
+    openDetail(currentDetail.migration.id); loadMigrations();
+}
+
+loadMeta().then(loadMigrations);
+</script>
+</body>
+</html>
