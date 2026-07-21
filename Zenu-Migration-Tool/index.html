@@ -74,6 +74,26 @@
                 CRM Roadmap
             </button>
 
+            <button type="button" onclick="openConsolidateModal()" class="bg-app-bg hover:bg-slate-800 text-cyan-400 border border-app-border px-4 py-2 rounded text-sm font-medium transition-colors flex items-center gap-1 shadow-[0_0_10px_rgba(34,211,238,0.1)]">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1-4l-4 4m0 0L8 3m4 4V3"></path></svg>
+                Consolidate Excel
+            </button>
+
+            <button type="button" onclick="openImportPrepModal()" class="bg-app-bg hover:bg-slate-800 text-rose-400 border border-app-border px-4 py-2 rounded text-sm font-medium transition-colors flex items-center gap-1 shadow-[0_0_10px_rgba(244,63,94,0.1)]">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>
+                Import Prep
+            </button>
+
+            <a href="field_bridge.html" class="bg-app-bg hover:bg-slate-800 text-purple-400 border border-app-border px-4 py-2 rounded text-sm font-medium transition-colors flex items-center gap-1 shadow-[0_0_10px_rgba(168,85,247,0.1)]">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
+                Field Bridge
+            </a>
+
+            <a href="Reconciliation.html" class="bg-app-bg hover:bg-slate-800 text-emerald-400 border border-app-border px-4 py-2 rounded text-sm font-medium transition-colors flex items-center gap-1 shadow-[0_0_10px_rgba(16,185,129,0.1)]">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
+                Reconciliation
+            </a>
+
             <button type="button" onclick="openExportModal()" class="bg-app-bg hover:bg-slate-800 text-slate-300 border border-app-border px-4 py-2 rounded text-sm font-medium transition-colors ml-1">
                 Export Config
             </button>
@@ -292,6 +312,107 @@
             <div class="flex justify-end gap-3 pt-4 border-t border-app-border">
                 <button type="button" onclick="closeExportModal()" class="px-4 py-2 text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors">Cancel</button>
                 <button type="button" onclick="executeExport()" class="bg-slate-700 hover:bg-slate-600 text-white px-5 py-2 rounded text-sm font-medium border border-slate-500/50 transition-colors">Serialize & Download</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="consolidateModal" class="fixed inset-0 bg-black/60 hidden items-center justify-center z-50 backdrop-blur-sm transition-opacity">
+        <div class="bg-app-card border border-app-border rounded-xl shadow-[0_0_40px_rgba(0,0,0,0.5)] w-full max-w-md p-6 flex flex-col relative overflow-hidden">
+            <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-cyan-400 to-indigo-500"></div>
+            <div class="shrink-0 mb-5">
+                <h3 class="text-xl font-bold text-slate-100 mb-1 font-mono uppercase tracking-wider">Consolidate Excel</h3>
+                <p class="text-sm text-slate-400">Merge multiple Excel workbooks into a single file.</p>
+            </div>
+
+            <div class="mb-4">
+                <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
+                    <div class="w-1.5 h-1.5 rounded-full bg-cyan-400"></div>
+                    Select Excel Files (.xlsx / .xls)
+                </label>
+                <label class="block bg-app-bg hover:bg-slate-800 text-cyan-400 border border-cyan-500/30 px-4 py-3 rounded text-sm font-medium cursor-pointer transition-colors text-center">
+                    Click to attach files
+                    <input type="file" id="consolidateInput" accept=".xlsx,.xls" multiple class="hidden" onchange="updateConsolidateFileList()" />
+                </label>
+                <div id="consolidateFileList" class="mt-3 max-h-40 overflow-y-auto space-y-1 text-xs font-mono text-slate-400"></div>
+            </div>
+
+            <div class="mb-4 bg-app-bg p-4 rounded border border-app-border">
+                <label for="consolidateMode" class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
+                    <div class="w-1.5 h-1.5 rounded-full bg-purple-400"></div>
+                    Consolidation Mode
+                </label>
+                <select id="consolidateMode" class="w-full bg-app-card border border-app-border rounded p-2.5 text-sm outline-none focus:border-indigo-500 text-slate-200 font-medium">
+                    <option value="append" selected>Stack rows into one sheet (append)</option>
+                    <option value="sheets">One tab per file (separate sheets)</option>
+                </select>
+                <p class="text-[10px] text-slate-500 mt-2 italic">Append adds "__source_file__" / "__source_sheet__" columns so you can trace each row's origin.</p>
+
+                <label for="consolidateOutputName" class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 mt-4 flex items-center gap-2">
+                    <div class="w-1.5 h-1.5 rounded-full bg-emerald-400"></div>
+                    Output File Name
+                </label>
+                <input type="text" id="consolidateOutputName" value="consolidated" class="w-full bg-app-card border border-app-border rounded p-2 text-sm outline-none focus:border-emerald-500 text-slate-200 font-mono" placeholder="consolidated">
+            </div>
+
+            <div class="flex justify-end gap-3 pt-4 border-t border-app-border">
+                <button type="button" onclick="closeConsolidateModal()" class="px-4 py-2 text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors">Cancel</button>
+                <button type="button" onclick="executeConsolidation(event)" id="executeConsolidateBtn" class="bg-cyan-600 hover:bg-cyan-500 text-white px-5 py-2 rounded text-sm font-bold transition-all shadow-[0_0_15px_rgba(34,211,238,0.4)] hover:shadow-[0_0_25px_rgba(34,211,238,0.6)] flex items-center gap-2">
+                    Consolidate &amp; Download
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="importPrepModal" class="fixed inset-0 bg-black/60 hidden items-center justify-center z-50 backdrop-blur-sm transition-opacity">
+        <div class="bg-app-card border border-app-border rounded-xl shadow-[0_0_40px_rgba(0,0,0,0.5)] w-full max-w-md p-6 flex flex-col relative overflow-hidden">
+            <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-rose-500 to-amber-400"></div>
+            <div class="shrink-0 mb-5">
+                <h3 class="text-xl font-bold text-slate-100 mb-1 font-mono uppercase tracking-wider">Import Prep</h3>
+                <p class="text-sm text-slate-400">Map an input file to the Zenu template &amp; strip special characters.</p>
+            </div>
+
+            <div class="mb-4">
+                <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
+                    <div class="w-1.5 h-1.5 rounded-full bg-rose-400"></div>
+                    Input File (the actual data)
+                </label>
+                <label class="block bg-app-bg hover:bg-slate-800 text-rose-400 border border-rose-500/30 px-4 py-3 rounded text-sm font-medium cursor-pointer transition-colors text-center">
+                    <span id="importPrepInputLabel">Click to select input file</span>
+                    <input type="file" id="importPrepInput" accept=".xlsx,.xls,.csv" class="hidden" onchange="updateImportPrepLabels()" />
+                </label>
+            </div>
+
+            <div class="mb-4">
+                <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
+                    <div class="w-1.5 h-1.5 rounded-full bg-emerald-400"></div>
+                    Compare To (Zenu template)
+                </label>
+                <label class="block bg-app-bg hover:bg-slate-800 text-emerald-400 border border-emerald-500/30 px-4 py-3 rounded text-sm font-medium cursor-pointer transition-colors text-center">
+                    <span id="importPrepTemplateLabel">Click to select template</span>
+                    <input type="file" id="importPrepTemplate" accept=".xlsx,.xls,.csv" class="hidden" onchange="updateImportPrepLabels()" />
+                </label>
+                <p class="text-[10px] text-slate-500 mt-2 italic">Row 1 of the template defines the output columns &amp; their order.</p>
+            </div>
+
+            <div class="mb-5 bg-app-bg p-4 rounded border border-app-border">
+                <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Special Character Handling</label>
+                <div class="space-y-2.5">
+                    <label class="flex items-center gap-3 cursor-pointer">
+                        <input type="radio" name="importPrepMode" value="remove" checked class="w-4 h-4 text-rose-600 bg-slate-900 border-slate-600 focus:ring-rose-500">
+                        <span class="text-sm font-medium text-slate-200">Remove special characters</span>
+                    </label>
+                    <label class="flex items-center gap-3 cursor-not-allowed opacity-50">
+                        <input type="radio" name="importPrepMode" value="highlight" disabled class="w-4 h-4 bg-slate-900 border-slate-600">
+                        <span class="text-sm font-medium text-slate-400">Highlight special characters <span class="text-[10px] font-mono ml-1">(Excel-only — not available here)</span></span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-4 border-t border-app-border">
+                <button type="button" onclick="closeImportPrepModal()" class="px-4 py-2 text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors">Cancel</button>
+                <button type="button" onclick="executeImportPrep(event)" id="executeImportPrepBtn" class="bg-rose-600 hover:bg-rose-500 text-white px-5 py-2 rounded text-sm font-bold transition-all shadow-[0_0_15px_rgba(244,63,94,0.4)] hover:shadow-[0_0_25px_rgba(244,63,94,0.6)] flex items-center gap-2">
+                    Generate
+                </button>
             </div>
         </div>
     </div>
@@ -1229,6 +1350,211 @@
         function closeExportModal() {
             exportModal.classList.add('hidden');
             exportModal.classList.remove('flex');
+        }
+
+        // --- Excel Consolidation Functions ---
+        function openConsolidateModal() {
+            const input = document.getElementById('consolidateInput');
+            input.value = '';
+            updateConsolidateFileList();
+            const modal = document.getElementById('consolidateModal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closeConsolidateModal() {
+            const modal = document.getElementById('consolidateModal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        function updateConsolidateFileList() {
+            const files = document.getElementById('consolidateInput').files;
+            const list = document.getElementById('consolidateFileList');
+            if (!files || files.length === 0) {
+                list.innerHTML = '<span class="text-slate-600 italic">No files selected yet.</span>';
+                return;
+            }
+            list.innerHTML = Array.from(files).map(f => `
+                <div class="flex items-center gap-2 bg-app-bg border border-app-border rounded px-2 py-1">
+                    <div class="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0"></div>
+                    <span class="truncate text-slate-300">${f.name}</span>
+                </div>
+            `).join('');
+        }
+
+        async function executeConsolidation(event) {
+            const btn = document.getElementById('executeConsolidateBtn');
+            const files = document.getElementById('consolidateInput').files;
+
+            if (!files || files.length === 0) {
+                return showNotification("Consolidation Blocked", "Attach at least one Excel file first.", "error");
+            }
+            if (files.length < 2) {
+                showNotification("Heads Up", "Only one file selected — consolidating a single workbook.", "warning");
+            }
+
+            const mode = document.getElementById('consolidateMode').value;
+            const outputName = (document.getElementById('consolidateOutputName').value || 'consolidated').trim();
+
+            const formData = new FormData();
+            Array.from(files).forEach(f => formData.append('files', f));
+            formData.append('mode', mode);
+            formData.append('output_name', outputName);
+
+            const originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.classList.add('opacity-60', 'cursor-not-allowed');
+            btn.innerHTML = 'Consolidating...';
+
+            try {
+                const res = await fetch("http://127.0.0.1:8000/api/consolidate-excel", {
+                    method: "POST",
+                    body: formData
+                });
+
+                if (!res.ok) {
+                    let msg = `Server returned ${res.status}.`;
+                    try {
+                        const err = await res.json();
+                        if (err && err.message) msg = err.message;
+                    } catch (_) {}
+                    throw new Error(msg);
+                }
+
+                const filesProcessed = res.headers.get('X-Files-Processed');
+                const totalRows = res.headers.get('X-Total-Rows');
+
+                // Extract filename from Content-Disposition, fall back to output name
+                let downloadName = outputName.toLowerCase().endsWith('.xlsx') ? outputName : `${outputName}.xlsx`;
+                const disp = res.headers.get('Content-Disposition');
+                if (disp) {
+                    const match = disp.match(/filename="?([^"]+)"?/);
+                    if (match) downloadName = match[1];
+                }
+
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = downloadName;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+
+                const detail = (filesProcessed && totalRows)
+                    ? `Merged ${filesProcessed} file(s), ${Number(totalRows).toLocaleString()} rows into ${downloadName}.`
+                    : `Downloaded ${downloadName}.`;
+                showNotification("Consolidation Complete", detail, "success");
+                closeConsolidateModal();
+            } catch (err) {
+                showNotification("Consolidation Failed", err.message || "Unable to reach the engine. Is the API running?", "error");
+            } finally {
+                btn.disabled = false;
+                btn.classList.remove('opacity-60', 'cursor-not-allowed');
+                btn.innerHTML = originalHtml;
+            }
+        }
+
+        // --- Import Prep Functions ---
+        function openImportPrepModal() {
+            document.getElementById('importPrepInput').value = '';
+            document.getElementById('importPrepTemplate').value = '';
+            updateImportPrepLabels();
+            const modal = document.getElementById('importPrepModal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closeImportPrepModal() {
+            const modal = document.getElementById('importPrepModal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        function updateImportPrepLabels() {
+            const inp = document.getElementById('importPrepInput').files[0];
+            const tpl = document.getElementById('importPrepTemplate').files[0];
+            document.getElementById('importPrepInputLabel').textContent = inp ? inp.name : 'Click to select input file';
+            document.getElementById('importPrepTemplateLabel').textContent = tpl ? tpl.name : 'Click to select template';
+        }
+
+        async function executeImportPrep(event) {
+            const btn = document.getElementById('executeImportPrepBtn');
+            const inputFile = document.getElementById('importPrepInput').files[0];
+            const templateFile = document.getElementById('importPrepTemplate').files[0];
+
+            if (!inputFile) {
+                return showNotification("Import Prep Blocked", "Select the input data file first.", "error");
+            }
+            if (!templateFile) {
+                return showNotification("Import Prep Blocked", "Select the Compare To (Zenu template) file.", "error");
+            }
+
+            const mode = (document.querySelector('input[name="importPrepMode"]:checked') || {}).value || 'remove';
+
+            const formData = new FormData();
+            formData.append('input_file', inputFile);
+            formData.append('template_file', templateFile);
+            formData.append('mode', mode);
+
+            const originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.classList.add('opacity-60', 'cursor-not-allowed');
+            btn.innerHTML = 'Generating...';
+
+            try {
+                const res = await fetch("http://127.0.0.1:8000/api/import-prep", {
+                    method: "POST",
+                    body: formData
+                });
+
+                if (!res.ok) {
+                    let msg = `Server returned ${res.status}.`;
+                    try {
+                        const err = await res.json();
+                        if (err && err.message) msg = err.message;
+                    } catch (_) {}
+                    throw new Error(msg);
+                }
+
+                const filesGenerated = res.headers.get('X-Files-Generated');
+                const cellsChanged = res.headers.get('X-Cells-Changed');
+                const totalRows = res.headers.get('X-Total-Rows');
+
+                let downloadName = 'import_prep_output.zip';
+                const disp = res.headers.get('Content-Disposition');
+                if (disp) {
+                    const match = disp.match(/filename="?([^"]+)"?/);
+                    if (match) downloadName = match[1];
+                }
+
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = downloadName;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+
+                let detail = `Generated ${downloadName}.`;
+                if (totalRows && cellsChanged) {
+                    detail = `${Number(totalRows).toLocaleString()} rows processed · ` +
+                             `${Number(cellsChanged).toLocaleString()} cells cleaned` +
+                             (filesGenerated && Number(filesGenerated) > 1 ? ` · ${filesGenerated} files (zipped)` : '') + '.';
+                }
+                showNotification("Import Prep Complete", detail, "success");
+                closeImportPrepModal();
+            } catch (err) {
+                showNotification("Import Prep Failed", err.message || "Unable to reach the engine. Is the API running?", "error");
+            } finally {
+                btn.disabled = false;
+                btn.classList.remove('opacity-60', 'cursor-not-allowed');
+                btn.innerHTML = originalHtml;
+            }
         }
 
         function executeExport() {
