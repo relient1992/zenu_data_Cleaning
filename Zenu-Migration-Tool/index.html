@@ -22,6 +22,44 @@
         .drop-zone.drag-over { background-color: rgba(99, 102, 241, 0.15); border-color: #6366f1; border-style: dashed; }
         
         .mapped-target { background-color: rgba(16, 185, 129, 0.1); border-color: rgba(52, 211, 153, 0.4); color: #34d399; }
+
+        /* ---- Boot / Datacenter Migration Splash ---- */
+        @keyframes bootGridDrift { from { background-position: 0 0; } to { background-position: 44px 44px; } }
+        @keyframes bootPacket {
+            0%   { left: 0%;   opacity: 0; transform: translateY(-50%) scale(0.6); }
+            12%  { opacity: 1; transform: translateY(-50%) scale(1); }
+            88%  { opacity: 1; transform: translateY(-50%) scale(1); }
+            100% { left: 100%; opacity: 0; transform: translateY(-50%) scale(0.6); }
+        }
+        @keyframes bootLed { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+        @keyframes bootBarFill { from { width: 0%; } to { width: 100%; } }
+        @keyframes bootPulseIndigo { 0%,100% { box-shadow: 0 0 14px rgba(99,102,241,0.25); } 50% { box-shadow: 0 0 30px rgba(99,102,241,0.6); } }
+        @keyframes bootPulseEmerald { 0%,100% { box-shadow: 0 0 14px rgba(16,185,129,0.25); } 50% { box-shadow: 0 0 30px rgba(16,185,129,0.6); } }
+        @keyframes bootFadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+        @keyframes bootScan { 0% { transform: translateY(-100%); } 100% { transform: translateY(400%); } }
+
+        #bootSplash { transition: opacity 0.6s ease, visibility 0.6s ease; }
+        #bootSplash.done { opacity: 0; visibility: hidden; pointer-events: none; }
+        #bootSplash .boot-grid {
+            position: absolute; inset: 0;
+            background-image:
+                linear-gradient(rgba(99,102,241,0.07) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(99,102,241,0.07) 1px, transparent 1px);
+            background-size: 44px 44px;
+            animation: bootGridDrift 3.5s linear infinite;
+            -webkit-mask-image: radial-gradient(circle at 50% 45%, #000 0%, transparent 75%);
+            mask-image: radial-gradient(circle at 50% 45%, #000 0%, transparent 75%);
+        }
+        .boot-rack-indigo { animation: bootPulseIndigo 2.2s ease-in-out infinite; }
+        .boot-rack-emerald { animation: bootPulseEmerald 2.2s ease-in-out infinite; }
+        .boot-led { animation: bootLed 1.1s ease-in-out infinite; }
+        .boot-packet { animation: bootPacket 1.9s linear infinite; }
+        .boot-bar-fill { animation: bootBarFill 3.1s ease-in-out forwards; }
+        .boot-scan { animation: bootScan 2.2s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) {
+            #bootSplash .boot-grid, .boot-rack-indigo, .boot-rack-emerald,
+            .boot-led, .boot-packet, .boot-scan { animation: none; }
+        }
     </style>
     <script>
         tailwind.config = {
@@ -45,9 +83,99 @@
 </head>
 <body class="bg-app-bg text-slate-300 h-screen flex flex-col font-sans relative overflow-hidden selection:bg-indigo-500/30">
 
+    <!-- ============ DATACENTER MIGRATION BOOT SPLASH ============ -->
+    <div id="bootSplash" class="fixed inset-0 z-[300] bg-app-bg flex flex-col items-center justify-center overflow-hidden" onclick="dismissBoot()">
+        <div class="boot-grid"></div>
+
+        <div class="relative z-10 flex flex-col items-center px-6 text-center w-full" style="animation: bootFadeUp 0.7s ease both;">
+            <div class="text-[11px] font-mono tracking-[0.4em] text-slate-500 mb-2">ZENU REAL ESTATE</div>
+            <h1 class="text-3xl md:text-4xl font-black tracking-wide uppercase text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-cyan-400 to-emerald-400 mb-1">Migration Engine Core</h1>
+            <p class="text-[11px] font-mono text-slate-600 mb-10 uppercase tracking-[0.25em]">Datacenter Migration Sequence</p>
+
+            <!-- Scene: Source CRM  ->  Zenu Cloud -->
+            <div class="flex items-center justify-center gap-4 md:gap-8 mb-10">
+                <!-- Source datacenter -->
+                <div class="flex flex-col items-center gap-3">
+                    <div class="boot-rack-indigo relative w-24 md:w-28 p-2.5 bg-app-card border border-indigo-500/40 rounded-lg flex flex-col gap-1.5 overflow-hidden">
+                        <div class="absolute left-0 right-0 h-6 bg-gradient-to-b from-indigo-400/20 to-transparent boot-scan pointer-events-none"></div>
+                        <div class="flex items-center gap-1.5 bg-app-bg/70 rounded px-2 py-1.5"><span class="boot-led w-1.5 h-1.5 rounded-full bg-indigo-400" style="animation-delay:0s"></span><div class="flex-1 h-1 rounded bg-slate-700"></div></div>
+                        <div class="flex items-center gap-1.5 bg-app-bg/70 rounded px-2 py-1.5"><span class="boot-led w-1.5 h-1.5 rounded-full bg-cyan-400" style="animation-delay:.3s"></span><div class="flex-1 h-1 rounded bg-slate-700"></div></div>
+                        <div class="flex items-center gap-1.5 bg-app-bg/70 rounded px-2 py-1.5"><span class="boot-led w-1.5 h-1.5 rounded-full bg-indigo-400" style="animation-delay:.6s"></span><div class="flex-1 h-1 rounded bg-slate-700"></div></div>
+                        <div class="flex items-center gap-1.5 bg-app-bg/70 rounded px-2 py-1.5"><span class="boot-led w-1.5 h-1.5 rounded-full bg-cyan-400" style="animation-delay:.9s"></span><div class="flex-1 h-1 rounded bg-slate-700"></div></div>
+                    </div>
+                    <div class="text-[10px] font-mono text-slate-500 tracking-[0.2em]">SOURCE CRM</div>
+                </div>
+
+                <!-- Data pipe with flowing packets -->
+                <div class="relative w-28 md:w-52 h-10">
+                    <div class="absolute top-1/2 left-0 w-full border-t border-dashed border-indigo-500/40"></div>
+                    <div class="boot-packet absolute top-1/2 w-2.5 h-2.5 rounded-sm bg-cyan-400 shadow-[0_0_10px_#22d3ee]" style="animation-delay:0s"></div>
+                    <div class="boot-packet absolute top-1/2 w-2.5 h-2.5 rounded-sm bg-indigo-400 shadow-[0_0_10px_#818cf8]" style="animation-delay:.48s"></div>
+                    <div class="boot-packet absolute top-1/2 w-2.5 h-2.5 rounded-sm bg-cyan-400 shadow-[0_0_10px_#22d3ee]" style="animation-delay:.96s"></div>
+                    <div class="boot-packet absolute top-1/2 w-2.5 h-2.5 rounded-sm bg-emerald-400 shadow-[0_0_10px_#34d399]" style="animation-delay:1.44s"></div>
+                </div>
+
+                <!-- Zenu cloud datacenter -->
+                <div class="flex flex-col items-center gap-3">
+                    <div class="boot-rack-emerald relative w-24 md:w-28 p-2.5 bg-app-card border border-emerald-500/40 rounded-lg flex flex-col gap-1.5 overflow-hidden">
+                        <div class="absolute left-0 right-0 h-6 bg-gradient-to-b from-emerald-400/20 to-transparent boot-scan pointer-events-none" style="animation-delay:.6s"></div>
+                        <div class="flex items-center gap-1.5 bg-app-bg/70 rounded px-2 py-1.5"><span class="boot-led w-1.5 h-1.5 rounded-full bg-emerald-400" style="animation-delay:.15s"></span><div class="flex-1 h-1 rounded bg-slate-700"></div></div>
+                        <div class="flex items-center gap-1.5 bg-app-bg/70 rounded px-2 py-1.5"><span class="boot-led w-1.5 h-1.5 rounded-full bg-cyan-400" style="animation-delay:.45s"></span><div class="flex-1 h-1 rounded bg-slate-700"></div></div>
+                        <div class="flex items-center gap-1.5 bg-app-bg/70 rounded px-2 py-1.5"><span class="boot-led w-1.5 h-1.5 rounded-full bg-emerald-400" style="animation-delay:.75s"></span><div class="flex-1 h-1 rounded bg-slate-700"></div></div>
+                        <div class="flex items-center gap-1.5 bg-app-bg/70 rounded px-2 py-1.5"><span class="boot-led w-1.5 h-1.5 rounded-full bg-cyan-400" style="animation-delay:1.05s"></span><div class="flex-1 h-1 rounded bg-slate-700"></div></div>
+                    </div>
+                    <div class="text-[10px] font-mono text-emerald-500 tracking-[0.2em]">ZENU CLOUD</div>
+                </div>
+            </div>
+
+            <!-- Progress bar -->
+            <div class="w-64 md:w-80 h-1.5 bg-slate-800 rounded-full overflow-hidden mb-3">
+                <div class="boot-bar-fill h-full bg-gradient-to-r from-indigo-500 via-cyan-400 to-emerald-400 shadow-[0_0_12px_rgba(34,211,238,0.5)]"></div>
+            </div>
+            <div id="bootLog" class="h-4 text-[11px] font-mono text-slate-500 tracking-wide"></div>
+            <div class="text-[10px] font-mono text-slate-700 mt-8 uppercase tracking-[0.2em]">Click anywhere to skip</div>
+        </div>
+    </div>
+
+    <script>
+        (function () {
+            var splash = document.getElementById('bootSplash');
+            if (!splash) return;
+
+            // Show only on first entry per browser session (returning from Tools pages won't replay)
+            if (sessionStorage.getItem('zenuBooted')) {
+                if (splash.parentNode) splash.parentNode.removeChild(splash);
+                return;
+            }
+
+            var log = document.getElementById('bootLog');
+            var msgs = [
+                'Establishing secure migration tunnel…',
+                'Loading Zenu unified schema…',
+                'Indexing source CRM records…',
+                'Synchronizing transformation matrices…',
+                'Migration core online.'
+            ];
+            var i = 0, iv, timer;
+            function step() { if (log && i < msgs.length) log.textContent = msgs[i++]; }
+
+            window.dismissBoot = function () {
+                clearInterval(iv);
+                clearTimeout(timer);
+                sessionStorage.setItem('zenuBooted', '1');
+                splash.classList.add('done');
+                setTimeout(function () { if (splash && splash.parentNode) splash.parentNode.removeChild(splash); }, 650);
+            };
+
+            step();
+            iv = setInterval(step, 620);
+            timer = setTimeout(window.dismissBoot, 3300);
+        })();
+    </script>
+
     <div id="toastContainer" class="fixed bottom-6 right-6 z-[200] flex flex-col gap-3 pointer-events-none"></div>
 
-    <header class="bg-app-card/80 backdrop-blur-md border-b border-app-border px-6 py-4 flex justify-between items-center shadow-lg z-10">
+    <header class="bg-app-card/80 backdrop-blur-md border-b border-app-border px-6 py-4 flex justify-between items-center shadow-lg relative z-40">
         <div>
             <h1 class="text-xl font-black tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-cyan-400 uppercase">Migration Engine Core</h1>
             <p class="text-xs text-slate-500 font-mono mt-0.5">MULTI-CRM TO ZENU UNIFIED SCHEMA ARCHITECTURE</p>
@@ -64,39 +192,54 @@
                 </label>
             </div>
             
-            <label class="bg-app-bg hover:bg-slate-800 text-slate-300 border border-app-border px-4 py-2 rounded text-sm font-medium cursor-pointer transition-colors">
-                Load Config (.json)
-                <input type="file" id="importInput" accept=".json" class="hidden" />
-            </label>
-            
-            <button type="button" onclick="openRoadmapModal()" class="bg-app-bg hover:bg-slate-800 text-emerald-400 border border-app-border px-4 py-2 rounded text-sm font-medium transition-colors flex items-center gap-1 shadow-[0_0_10px_rgba(16,185,129,0.1)]">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
-                CRM Roadmap
-            </button>
+            <div class="relative" data-header-dropdown>
+                <button type="button" onclick="toggleHeaderMenu(event, 'configMenu')" class="bg-app-bg hover:bg-slate-800 text-slate-300 border border-app-border px-4 py-2 rounded text-sm font-medium transition-colors flex items-center gap-1.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                    Config
+                    <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"></path></svg>
+                </button>
+                <div id="configMenu" onclick="event.stopPropagation()" class="hidden absolute right-0 mt-2 w-56 bg-app-card border border-app-border rounded-lg shadow-[0_10px_40px_rgba(0,0,0,0.6)] p-1.5 flex flex-col gap-0.5 z-50">
+                    <label class="text-left px-3 py-2 rounded text-sm font-medium text-slate-300 hover:bg-slate-800 transition-colors flex items-center gap-2.5 cursor-pointer">
+                        <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                        Load Config (.json)
+                        <input type="file" id="importInput" accept=".json" class="hidden" />
+                    </label>
+                    <button type="button" onclick="closeHeaderMenus(); openExportModal()" class="text-left px-3 py-2 rounded text-sm font-medium text-slate-300 hover:bg-slate-800 transition-colors flex items-center gap-2.5">
+                        <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                        Export Config
+                    </button>
+                </div>
+            </div>
 
-            <button type="button" onclick="openConsolidateModal()" class="bg-app-bg hover:bg-slate-800 text-cyan-400 border border-app-border px-4 py-2 rounded text-sm font-medium transition-colors flex items-center gap-1 shadow-[0_0_10px_rgba(34,211,238,0.1)]">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1-4l-4 4m0 0L8 3m4 4V3"></path></svg>
-                Consolidate Excel
-            </button>
-
-            <button type="button" onclick="openImportPrepModal()" class="bg-app-bg hover:bg-slate-800 text-rose-400 border border-app-border px-4 py-2 rounded text-sm font-medium transition-colors flex items-center gap-1 shadow-[0_0_10px_rgba(244,63,94,0.1)]">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>
-                Import Prep
-            </button>
-
-            <a href="field_bridge.html" class="bg-app-bg hover:bg-slate-800 text-purple-400 border border-app-border px-4 py-2 rounded text-sm font-medium transition-colors flex items-center gap-1 shadow-[0_0_10px_rgba(168,85,247,0.1)]">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
-                Field Bridge
-            </a>
-
-            <a href="Reconciliation.html" class="bg-app-bg hover:bg-slate-800 text-emerald-400 border border-app-border px-4 py-2 rounded text-sm font-medium transition-colors flex items-center gap-1 shadow-[0_0_10px_rgba(16,185,129,0.1)]">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
-                Reconciliation
-            </a>
-
-            <button type="button" onclick="openExportModal()" class="bg-app-bg hover:bg-slate-800 text-slate-300 border border-app-border px-4 py-2 rounded text-sm font-medium transition-colors ml-1">
-                Export Config
-            </button>
+            <div class="relative" data-header-dropdown>
+                <button type="button" onclick="toggleHeaderMenu(event, 'toolsMenu')" class="bg-app-bg hover:bg-slate-800 text-indigo-300 border border-app-border px-4 py-2 rounded text-sm font-medium transition-colors flex items-center gap-1.5 shadow-[0_0_10px_rgba(99,102,241,0.1)]">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                    Tools
+                    <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"></path></svg>
+                </button>
+                <div id="toolsMenu" onclick="event.stopPropagation()" class="hidden absolute right-0 mt-2 w-60 bg-app-card border border-app-border rounded-lg shadow-[0_10px_40px_rgba(0,0,0,0.6)] p-1.5 flex flex-col gap-0.5 z-50">
+                    <button type="button" onclick="closeHeaderMenus(); openRoadmapModal()" class="text-left px-3 py-2 rounded text-sm font-medium text-emerald-400 hover:bg-slate-800 transition-colors flex items-center gap-2.5">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                        CRM Roadmap
+                    </button>
+                    <button type="button" onclick="closeHeaderMenus(); openConsolidateModal()" class="text-left px-3 py-2 rounded text-sm font-medium text-cyan-400 hover:bg-slate-800 transition-colors flex items-center gap-2.5">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1-4l-4 4m0 0L8 3m4 4V3"></path></svg>
+                        Consolidate Excel
+                    </button>
+                    <button type="button" onclick="closeHeaderMenus(); openImportPrepModal()" class="text-left px-3 py-2 rounded text-sm font-medium text-rose-400 hover:bg-slate-800 transition-colors flex items-center gap-2.5">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>
+                        Import Prep
+                    </button>
+                    <a href="field_bridge.html" onclick="closeHeaderMenus()" class="text-left px-3 py-2 rounded text-sm font-medium text-purple-400 hover:bg-slate-800 transition-colors flex items-center gap-2.5">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
+                        Field Bridge
+                    </a>
+                    <a href="Reconciliation.html" onclick="closeHeaderMenus()" class="text-left px-3 py-2 rounded text-sm font-medium text-emerald-400 hover:bg-slate-800 transition-colors flex items-center gap-2.5">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
+                        Reconciliation
+                    </a>
+                </div>
+            </div>
 
             <button type="button" onclick="openRunModal()" class="ml-2 bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2 rounded text-sm font-bold transition-all shadow-[0_0_15px_rgba(99,102,241,0.4)] hover:shadow-[0_0_25px_rgba(99,102,241,0.6)] relative overflow-hidden group tracking-wide uppercase">
                 <span class="relative z-10 flex items-center gap-2">
@@ -1556,6 +1699,27 @@
                 btn.innerHTML = originalHtml;
             }
         }
+
+        // --- Header Dropdown Menus (Config / Tools) ---
+        function closeHeaderMenus() {
+            document.querySelectorAll('[data-header-dropdown] > div[id$="Menu"]').forEach(function (m) {
+                m.classList.add('hidden');
+            });
+        }
+
+        function toggleHeaderMenu(event, menuId) {
+            event.stopPropagation();
+            const menu = document.getElementById(menuId);
+            const isOpen = !menu.classList.contains('hidden');
+            closeHeaderMenus();
+            if (!isOpen) menu.classList.remove('hidden');
+        }
+
+        // Close menus on outside click or Escape
+        document.addEventListener('click', closeHeaderMenus);
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') closeHeaderMenus();
+        });
 
         function executeExport() {
             const selectedGroups = Array.from(document.querySelectorAll('.export-checkbox:checked')).map(cb => cb.value);
