@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Smart Mapper — Zenu Migration Platform</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="zenu_schema.js"></script>
+  <script src="zenu_matcher.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0B1120; --card: #0F172A; --border: #1E293B; --hover: #1E293B;
+      --text: #cbd5e1; --muted: #64748b; --muted2: #94a3b8;
+      --indigo: #818cf8; --indigo-strong: #6366f1; --cyan: #22d3ee;
+      --emerald: #34d399; --amber: #fbbf24; --purple: #c084fc; --red: #f87171;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font-family: 'Inter', system-ui, sans-serif; padding-bottom: 80px;
+      -webkit-font-smoothing: antialiased;
+    }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+    header {
+      background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border); padding: 18px 28px;
+      display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+      box-shadow: 0 4px 20px rgba(0,0,0,.35); position: sticky; top: 0; z-index: 20;
+    }
+    header .logo {
+      font-size: 20px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase;
+      background: linear-gradient(to right, var(--cyan), var(--emerald));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    header .tag { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--muted); }
+    header .back {
+      margin-left: auto; font-size: 13px; font-weight: 500; color: var(--indigo);
+      text-decoration: none; border: 1px solid var(--border); background: var(--bg);
+      padding: 8px 14px; border-radius: 6px; transition: background .15s, color .15s;
+    }
+    header .back:hover { background: var(--hover); color: #a5b4fc; }
+
+    .wrap { max-width: 1400px; margin: 0 auto; padding: 0 20px; }
+    .card {
+      position: relative; overflow: hidden; background: var(--card);
+      border: 1px solid var(--border); border-radius: 12px; padding: 22px;
+      margin-top: 20px; box-shadow: 0 8px 30px rgba(0,0,0,.35);
+    }
+    .card::before {
+      content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 3px;
+      background: linear-gradient(to right, var(--cyan), transparent);
+    }
+    #resultCard::before { background: linear-gradient(to right, var(--cyan), var(--emerald)); }
+    .card.error::before { background: linear-gradient(to right, var(--red), transparent); }
+
+    .step-head { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+    .step-head .left { display: flex; gap: 14px; align-items: center; }
+    .badge {
+      width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 700; background: #1e293b; color: var(--muted2);
+      border: 1px solid #334155;
+    }
+    .badge.active { background: var(--indigo-strong); color: #fff; border-color: transparent; box-shadow: 0 0 12px rgba(99,102,241,.5); }
+    .badge.done { background: #059669; color: #fff; border-color: transparent; box-shadow: 0 0 12px rgba(16,185,129,.45); }
+    h2 { font-size: 16px; font-weight: 700; margin: 0; color: #f1f5f9; }
+    .sub { font-size: 13px; color: var(--muted2); margin-top: 5px; }
+
+    .drop {
+      margin-top: 16px; border: 1.5px dashed #334155; background: rgba(11,17,32,.6);
+      border-radius: 10px; padding: 18px 16px; display: flex; align-items: center;
+      gap: 14px; cursor: pointer; transition: all .18s;
+    }
+    .drop:hover { border-color: var(--cyan); background: rgba(34,211,238,.06); }
+    .drop.has { border-color: rgba(52,211,153,.5); background: rgba(16,185,129,.08); border-style: solid; }
+    .drop .icon {
+      width: 42px; height: 42px; border-radius: 9px; flex-shrink: 0; background: #1e293b;
+      color: var(--muted2); display: flex; align-items: center; justify-content: center; font-size: 18px;
+    }
+    .drop.has .icon { background: #059669; color: #fff; box-shadow: 0 0 12px rgba(16,185,129,.45); }
+    .drop .fname { font-weight: 600; font-size: 14px; word-break: break-all; color: #e2e8f0; }
+    .drop .fhint { font-size: 12.5px; color: var(--muted); margin-top: 3px; font-family: 'JetBrains Mono', monospace; }
+
+    .controls { display: flex; gap: 16px; margin-top: 14px; flex-wrap: wrap; align-items: center; font-size: 13px; color: var(--muted2); }
+    .controls label { display: flex; align-items: center; gap: 8px; }
+    select, input[type=text], input[type=number], input[type=search] {
+      font-family: inherit; font-size: 13px; padding: 8px 11px; border-radius: 6px;
+      border: 1px solid var(--border); background: var(--bg); color: var(--text);
+      outline: none; transition: border-color .15s, box-shadow .15s;
+    }
+    select:focus, input:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(34,211,238,.13); }
+    input[type=text] { font-family: 'JetBrains Mono', monospace; min-width: 200px; }
+    input[type=number] { width: 70px; }
+    select { min-width: 150px; }
+    select option, select optgroup { background: var(--card); color: var(--text); }
+
+    button {
+      font-family: inherit; font-size: 14px; font-weight: 600; padding: 9px 18px;
+      border-radius: 7px; cursor: pointer; border: 1px solid transparent; transition: all .15s;
+    }
+    .btn-primary { background: var(--indigo-strong); color: #fff; box-shadow: 0 0 15px rgba(99,102,241,.35); }
+    .btn-primary:hover { background: #4f46e5; box-shadow: 0 0 22px rgba(99,102,241,.55); }
+    .btn-teal { background: #0891b2; color: #fff; box-shadow: 0 0 15px rgba(34,211,238,.3); }
+    .btn-teal:hover { background: #0e7490; box-shadow: 0 0 22px rgba(34,211,238,.5); }
+    .btn-ghost { background: rgba(99,102,241,.08); color: var(--indigo); border-color: rgba(99,102,241,.3); }
+    .btn-ghost:hover { background: rgba(99,102,241,.16); }
+    button:disabled { opacity: .5; cursor: default; }
+
+    /* stat tiles */
+    .stats { display: flex; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
+    .tile {
+      flex: 1 1 140px; background: rgba(11,17,32,.55); border: 1px solid var(--border);
+      border-radius: 9px; padding: 12px 14px;
+    }
+    .tile .k { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+    .tile .v { font-family: 'JetBrains Mono', monospace; font-size: 21px; font-weight: 700; margin-top: 4px; color: #e2e8f0; }
+    .tile .v.g { color: var(--emerald); } .tile .v.b { color: var(--cyan); }
+    .tile .v.a { color: var(--amber); }   .tile .v.p { color: var(--purple); }
+
+    .mapbar { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; align-items: center; }
+    .mapbar input[type=search] { flex: 1 1 220px; }
+
+    .tablewrap { overflow-x: auto; margin-top: 16px; border: 1px solid var(--border); border-radius: 8px; }
+    table { border-collapse: collapse; width: 100%; }
+    th {
+      text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em;
+      color: var(--muted2); padding: 10px 12px; border-bottom: 1px solid var(--border);
+      white-space: nowrap; background: rgba(11,17,32,.75); position: sticky; top: 0;
+    }
+    td { padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; font-size: 13px; }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: rgba(99,102,241,.04); }
+    td.col { font-family: 'JetBrains Mono', monospace; font-weight: 600; color: #e2e8f0; max-width: 220px; word-break: break-word; }
+    td.sample {
+      font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: var(--muted);
+      max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    td.arrow { color: var(--muted); text-align: center; width: 24px; }
+    td.reason { font-size: 11.5px; color: var(--muted); max-width: 170px; }
+    tr.unmapped td.col { color: var(--muted2); }
+    tr.unmapped { background: rgba(248,113,113,.03); }
+
+    .pill {
+      display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: 10.5px;
+      font-weight: 600; padding: 3px 8px; border-radius: 5px; white-space: nowrap;
+    }
+    .pill.high { background: rgba(16,185,129,.14); color: var(--emerald); border: 1px solid rgba(52,211,153,.35); }
+    .pill.med  { background: rgba(34,211,238,.12); color: var(--cyan); border: 1px solid rgba(34,211,238,.35); }
+    .pill.low  { background: rgba(251,191,36,.1); color: var(--amber); border: 1px solid rgba(251,191,36,.3); }
+    .pill.none { background: #1e293b; color: var(--muted); border: 1px solid #334155; }
+    .pill.man  { background: rgba(168,85,247,.12); color: var(--purple); border: 1px solid rgba(168,85,247,.35); }
+    .pill.type { background: #1e293b; color: var(--muted2); border: 1px solid #334155; }
+
+    .notice {
+      margin-top: 14px; font-size: 13px; padding: 11px 14px; border-radius: 8px;
+      background: rgba(251,191,36,.08); border: 1px solid rgba(251,191,36,.3); color: #fcd34d;
+    }
+    .error {
+      border-color: rgba(248,113,113,.4) !important; background: rgba(248,113,113,.08) !important;
+      color: #fca5a5; font-size: 13.5px;
+    }
+    .hidden { display: none !important; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .exportbar {
+      display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-end;
+      margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--border);
+    }
+    .fieldgrp { display: flex; flex-direction: column; gap: 6px; }
+    .fieldgrp .lbl { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">Smart Mapper</div>
+    <div class="tag">UNKNOWN CRM → ZENU SCHEMA · AUTO-MATCH · REVIEW · EXPORT CONFIG</div>
+    <a class="back" href="index.html">&larr; Migration Platform</a>
+  </header>
+
+  <div class="wrap">
+    <div id="errorCard" class="card error hidden"></div>
+
+    <!-- STEP 1 : upload -->
+    <section class="card">
+      <div class="step-head">
+        <div class="left">
+          <span class="badge active" id="badge1">1</span>
+          <div>
+            <h2>Upload the client's file</h2>
+            <div class="sub">Any unfamiliar CRM export. Its column headers are matched against the Zenu unified schema
+              (<span id="schemaCount" style="font-family:'JetBrains Mono',monospace;color:var(--cyan)">0</span> fields).</div>
+          </div>
+        </div>
+      </div>
+      <div class="drop" id="srcDrop">
+        <div class="icon">⇪</div>
+        <div>
+          <div class="fname" id="srcName">Drop the client file here or click to browse</div>
+          <div class="fhint" id="srcHint">.xlsx, .xls, or .csv</div>
+        </div>
+      </div>
+      <input type="file" id="srcInput" accept=".xlsx,.xls,.csv" class="hidden">
+      <div class="controls hidden" id="srcControls">
+        <label id="srcSheetWrap" class="hidden">Sheet <select id="srcSheet"></select></label>
+        <label>Header row <input type="number" id="srcHeaderRow" min="1" value="1"></label>
+        <label>Target entity
+          <select id="entitySelect">
+            <option value="auto">Auto-detect</option>
+            <option value="contact">Contact</option>
+            <option value="property">Property</option>
+            <option value="task">Task</option>
+            <option value="enquiry">Enquiry</option>
+            <option value="inspection">Inspection</option>
+            <option value="offer">Offer</option>
+          </select>
+        </label>
+      </div>
+    </section>
+
+    <!-- STEP 2 : results -->
+    <section class="card hidden" id="resultCard">
+      <div class="step-head">
+        <div class="left">
+          <span class="badge done" id="badge2">2</span>
+          <div>
+            <h2>Review the suggested mapping</h2>
+            <div class="sub" id="detectSub"></div>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn-ghost" id="rerunBtn">Re-run auto-match</button>
+          <button class="btn-ghost" id="clearBtn">Clear all mappings</button>
+        </div>
+      </div>
+
+      <div class="stats" id="stats"></div>
+
+      <div class="mapbar">
+        <input type="search" id="filterText" placeholder="Search client columns or Zenu fields…">
+        <label style="font-size:13px;color:var(--muted2);display:flex;align-items:center;gap:8px">Show
+          <select id="filterMode">
+            <option value="all">All columns</option>
+            <option value="mapped">Mapped only</option>
+            <option value="unmapped">Unmapped only</option>
+            <option value="review">Needs review (low / medium)</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Client Column</th>
+              <th>Sample Values</th>
+              <th></th>
+              <th>Zenu Field</th>
+              <th>Type</th>
+              <th>Confidence</th>
+              <th>Basis</th>
+            </tr>
+          </thead>
+          <tbody id="mapBody"></tbody>
+        </table>
+      </div>
+      <div class="sub hidden" id="filterEmpty">No columns match this filter.</div>
+
+      <!-- STEP 3 : export -->
+      <div class="exportbar">
+        <div class="fieldgrp">
+          <span class="lbl">Matrix / group name</span>
+          <input type="text" id="groupName" value="Contact Mapping">
+        </div>
+        <div class="fieldgrp">
+          <span class="lbl">Source file name (must match the CSV you attach)</span>
+          <input type="text" id="sourceFileName" value="">
+        </div>
+        <div class="actions" style="margin-left:auto">
+          <button class="btn-ghost" id="csvBtn">Download review .csv</button>
+          <button class="btn-teal" id="jsonBtn">Download Config .json</button>
+        </div>
+      </div>
+      <div class="sub">The .json loads straight into the Migration Platform via <strong>Config &rarr; Load Config (.json)</strong>.</div>
+    </section>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+
+  var FIELDS = (window.ZENU_FIELDS || []).slice();
+
+  /* Matching logic lives in zenu_matcher.js so it can be unit-tested in Node. */
+  var M = window.ZenuMatcher;
+  var norm = M ? M.norm : function (s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]/g, ''); };
+  var FIELDS = M ? M.prepareFields((window.ZENU_FIELDS || []).slice()) : [];
+
+  function autoMap() {
+    if (!M) return;
+    var res = M.autoMap(state.cols, FIELDS, state.entityMode, state.fileName + ' ' + state.sheet);
+    state.entity = res.entity;
+    state.map = res.map;
+    render();
+  }
+
+  /* ---------------- state ---------------- */
+  var state = {
+    wb: null, sheet: '', headerRow: 1, fileName: '',
+    cols: [], map: {}, entity: 'contact', entityMode: 'auto',
+    filter: '', filterMode: 'all'
+  };
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function showError(msg) {
+    var el = $('errorCard');
+    if (!msg) { el.classList.add('hidden'); return; }
+    el.textContent = msg;
+    el.classList.remove('hidden');
+  }
+
+  /* ---------------- file reading ---------------- */
+  function readWorkbook(file, cb) {
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      try { cb(null, XLSX.read(e.target.result, { type: 'array', cellDates: true })); }
+      catch (err) { cb(err); }
+    };
+    reader.onerror = function () { cb(new Error('read failed')); };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function parseSheet() {
+    var ws = state.wb.Sheets[state.sheet];
+    var all = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false, dateNF: 'yyyy-mm-dd' });
+    var hIdx = Math.max(0, state.headerRow - 1);
+    var headers = (all[hIdx] || []).map(function (h, i) {
+      var s = String(h == null ? '' : h).replace(/[﻿​]/g, '').trim();
+      return s === '' ? 'Column ' + (i + 1) : s;
+    });
+    var rows = all.slice(hIdx + 1).filter(function (r) {
+      return r.some(function (c) { return String(c).trim() !== ''; });
+    });
+
+    var raw = headers.map(function (h, i) {
+      var vals = [];
+      for (var r = 0; r < rows.length; r++) {
+        var v = rows[r][i];
+        if (v !== '' && v != null) vals.push(v);
+      }
+      return { header: h, values: vals };
+    });
+    state.cols = M ? M.prepareColumns(raw) : [];
+    state.rowCount = rows.length;
+  }
+
+  /* ---------------- upload wiring ---------------- */
+  (function wire() {
+    var drop = $('srcDrop'), input = $('srcInput');
+    drop.addEventListener('click', function () { input.click(); });
+    drop.addEventListener('dragover', function (e) { e.preventDefault(); });
+    drop.addEventListener('drop', function (e) {
+      e.preventDefault();
+      if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+    });
+    input.addEventListener('change', function () {
+      if (input.files[0]) loadFile(input.files[0]);
+      input.value = '';
+    });
+  })();
+
+  function loadFile(file) {
+    showError('');
+    readWorkbook(file, function (err, wb) {
+      if (err) { showError("Couldn't read " + file.name + '. Use .xlsx, .xls, or .csv.'); return; }
+      state.wb = wb;
+      state.sheet = wb.SheetNames[0];
+      state.fileName = file.name;
+      state.headerRow = 1;
+      $('srcHeaderRow').value = 1;
+      $('srcName').textContent = file.name;
+      $('srcHint').textContent = 'Click to replace';
+      $('srcDrop').classList.add('has');
+      $('srcDrop').querySelector('.icon').textContent = '✓';
+      $('srcControls').classList.remove('hidden');
+      $('srcSheet').innerHTML = wb.SheetNames.map(function (n) {
+        return '<option value="' + esc(n) + '">' + esc(n) + '</option>';
+      }).join('');
+      $('srcSheetWrap').classList.toggle('hidden', wb.SheetNames.length < 2);
+      $('sourceFileName').value = file.name.replace(/\.(xlsx|xls)$/i, '.csv');
+      parseSheet();
+      autoMap();
+    });
+  }
+
+  $('srcSheet').addEventListener('change', function () {
+    state.sheet = this.value; parseSheet(); autoMap();
+  });
+  $('srcHeaderRow').addEventListener('change', function () {
+    state.headerRow = Math.max(1, Number(this.value) || 1); parseSheet(); autoMap();
+  });
+  $('entitySelect').addEventListener('change', function () {
+    state.entityMode = this.value; autoMap();
+  });
+  $('rerunBtn').addEventListener('click', autoMap);
+  $('clearBtn').addEventListener('click', function () { state.map = {}; render(); });
+  $('filterText').addEventListener('input', function () { state.filter = this.value; renderRows(); });
+  $('filterMode').addEventListener('change', function () { state.filterMode = this.value; renderRows(); });
+
+  /* ---------------- rendering ---------------- */
+  var GROUP_LABEL = {
+    contact: 'Contact', property: 'Property', task: 'Task',
+    enquiry: 'Enquiry', inspection: 'Inspection', offer: 'Offer', other: 'Other'
+  };
+
+  function tier(m) {
+    if (!m) return { cls: 'none', label: 'unmapped' };
+    if (m.manual) return { cls: 'man', label: 'manual' };
+    if (m.score >= 80) return { cls: 'high', label: 'high · ' + Math.round(m.score) + '%' };
+    if (m.score >= 60) return { cls: 'med', label: 'medium · ' + Math.round(m.score) + '%' };
+    return { cls: 'low', label: 'low · ' + Math.round(m.score) + '%' };
+  }
+
+  function fieldByName(n) {
+    for (var i = 0; i < FIELDS.length; i++) if (FIELDS[i].name === n) return FIELDS[i];
+    return null;
+  }
+
+  function usedFieldNames(exceptCi) {
+    var u = {};
+    Object.keys(state.map).forEach(function (ci) {
+      if (String(ci) !== String(exceptCi)) u[state.map[ci].name] = 1;
+    });
+    return u;
+  }
+
+  function buildSelect(ci) {
+    var m = state.map[ci];
+    var used = usedFieldNames(ci);
+    var groups = {}, order = [];
+    // suggestions first
+    var col = state.cols[ci];
+    var sugg = (col.candidates || []).filter(function (c) { return !used[c.field.name]; }).slice(0, 5);
+
+    FIELDS.forEach(function (f) {
+      if (!groups[f.group]) { groups[f.group] = []; order.push(f.group); }
+      groups[f.group].push(f);
+    });
+    order.sort(function (a, b) {
+      if (a === state.entity) return -1;
+      if (b === state.entity) return 1;
+      return 0;
+    });
+
+    var html = '<select class="mapSel" data-ci="' + ci + '">';
+    html += '<option value=""' + (!m ? ' selected' : '') + '>— leave unmapped —</option>';
+    if (sugg.length) {
+      html += '<optgroup label="Suggested">';
+      sugg.forEach(function (s) {
+        var sel = m && m.name === s.field.name ? ' selected' : '';
+        html += '<option value="' + esc(s.field.name) + '"' + sel + '>' + esc(s.field.name) +
+                '  (' + Math.round(s.score) + '%)</option>';
+      });
+      html += '</optgroup>';
+    }
+    order.forEach(function (g) {
+      html += '<optgroup label="' + esc(GROUP_LABEL[g] || g) + '">';
+      groups[g].forEach(function (f) {
+        var sel = m && m.name === f.name ? ' selected' : '';
+        var dis = used[f.name] ? ' disabled' : '';
+        html += '<option value="' + esc(f.name) + '"' + sel + dis + '>' + esc(f.name) +
+                (used[f.name] ? ' — in use' : '') + '</option>';
+      });
+      html += '</optgroup>';
+    });
+    html += '</select>';
+    return html;
+  }
+
+  function renderStats() {
+    var total = state.cols.length;
+    var mapped = Object.keys(state.map).length;
+    var high = 0, review = 0;
+    Object.keys(state.map).forEach(function (ci) {
+      var m = state.map[ci];
+      if (m.manual || m.score >= 80) high++; else review++;
+    });
+    $('stats').innerHTML =
+      tile('Client columns', total, '') +
+      tile('Auto-mapped', mapped, 'g') +
+      tile('High confidence', high, 'b') +
+      tile('Needs review', review, 'a') +
+      tile('Unmapped', total - mapped, review || (total - mapped) ? 'a' : '') +
+      tile('Data rows', (state.rowCount || 0).toLocaleString(), 'p');
+  }
+
+  function tile(k, v, cls) {
+    return '<div class="tile"><div class="k">' + esc(k) + '</div><div class="v ' + cls + '">' + esc(v) + '</div></div>';
+  }
+
+  function renderRows() {
+    var q = norm(state.filter);
+    var body = '', shown = 0;
+
+    state.cols.forEach(function (col, ci) {
+      var m = state.map[ci];
+      if (state.filterMode === 'mapped' && !m) return;
+      if (state.filterMode === 'unmapped' && m) return;
+      if (state.filterMode === 'review' && (!m || m.manual || m.score >= 80)) return;
+      if (q && norm(col.header).indexOf(q) === -1 && !(m && norm(m.name).indexOf(q) !== -1)) return;
+
+      shown++;
+      var f = m ? fieldByName(m.name) : null;
+      var t = tier(m);
+      var sample = col.samples.length ? col.samples.join('  ·  ') : '—';
+
+      body += '<tr class="' + (m ? '' : 'unmapped') + '">' +
+        '<td class="col">' + esc(col.header) + '</td>' +
+        '<td class="sample" title="' + esc(sample) + '">' + esc(sample) + '</td>' +
+        '<td class="arrow">→</td>' +
+        '<td>' + buildSelect(ci) + '</td>' +
+        '<td>' + (f ? '<span class="pill type">' + esc(f.type) + '</span>' : '') + '</td>' +
+        '<td><span class="pill ' + t.cls + '">' + esc(t.label) + '</span></td>' +
+        '<td class="reason" title="' + esc(f ? f.desc : '') + '">' +
+          esc(m ? (m.manual ? 'set manually' : m.why) : 'no confident match') + '</td>' +
+      '</tr>';
+    });
+
+    $('mapBody').innerHTML = body;
+    $('filterEmpty').classList.toggle('hidden', shown > 0);
+
+    Array.prototype.forEach.call(document.querySelectorAll('.mapSel'), function (sel) {
+      sel.addEventListener('change', function () {
+        var ci = sel.getAttribute('data-ci');
+        if (!sel.value) delete state.map[ci];
+        else state.map[ci] = { name: sel.value, score: 100, why: 'set manually', manual: true };
+        render();
+      });
+    });
+  }
+
+  function render() {
+    if (!state.cols.length) { $('resultCard').classList.add('hidden'); return; }
+    $('resultCard').classList.remove('hidden');
+    var label = GROUP_LABEL[state.entity] || state.entity;
+    $('detectSub').innerHTML = 'Detected entity: <strong style="color:var(--emerald)">' + esc(label) +
+      '</strong> · matched against <strong style="color:var(--cyan)">' + FIELDS.length +
+      '</strong> Zenu fields. Change any suggestion with its dropdown.';
+    var gn = $('groupName');
+    if (!gn.dataset.touched) gn.value = label + ' Mapping';
+    renderStats();
+    renderRows();
+  }
+
+  $('groupName').addEventListener('input', function () { this.dataset.touched = '1'; });
+
+  /* ---------------- exports ---------------- */
+  function buildConfig() {
+    var group = $('groupName').value.trim() || 'Contact Mapping';
+    var srcFile = $('sourceFileName').value.trim() || state.fileName;
+    var rules = [], stamp = Date.now(), i = 0;
+
+    state.cols.forEach(function (col, ci) {
+      var m = state.map[ci];
+      if (!m) return;
+      var f = fieldByName(m.name);
+      var note = m.manual
+        ? 'Smart Mapper: set manually'
+        : 'Smart Mapper: ' + m.why + ' (' + Math.round(m.score) + '% confidence)';
+      if (f && f.type && f.type !== 'text') note += ' · expects ' + f.type;
+      rules.push({
+        id: stamp + (i++),
+        targetField: m.name,
+        sources: [{ file: srcFile, field: col.header, varId: 'S1' }],
+        action: 'direct',
+        notes: note
+      });
+    });
+
+    var cfg = {};
+    cfg[group] = rules;
+    return cfg;
+  }
+
+  function download(filename, text, mime) {
+    var blob = new Blob([text], { type: mime });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  $('jsonBtn').addEventListener('click', function () {
+    var cfg = buildConfig();
+    var group = Object.keys(cfg)[0];
+    if (!cfg[group].length) { showError('Nothing to export — no columns are mapped yet.'); return; }
+    showError('');
+    var base = (state.fileName || 'client').replace(/\.[^.]+$/, '');
+    download(base + '_zenu_mapping.json', JSON.stringify(cfg, null, 2), 'application/json');
+  });
+
+  $('csvBtn').addEventListener('click', function () {
+    var rows = [['Client Column', 'Sample Values', 'Zenu Field', 'Zenu Type', 'Confidence', 'Basis', 'Description']];
+    state.cols.forEach(function (col, ci) {
+      var m = state.map[ci];
+      var f = m ? fieldByName(m.name) : null;
+      rows.push([
+        col.header,
+        col.samples.join(' | '),
+        m ? m.name : '',
+        f ? f.type : '',
+        m ? (m.manual ? 'manual' : Math.round(m.score) + '%') : 'unmapped',
+        m ? m.why : 'no confident match',
+        f ? f.desc : ''
+      ]);
+    });
+    var csv = rows.map(function (r) {
+      return r.map(function (c) {
+        var v = String(c == null ? '' : c);
+        return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+      }).join(',');
+    }).join('\r\n');
+    var base = (state.fileName || 'client').replace(/\.[^.]+$/, '');
+    download(base + '_mapping_review.csv', '﻿' + csv, 'text/csv');
+  });
+
+  /* ---------------- init ---------------- */
+  if (!M || !FIELDS.length) {
+    showError('Could not load zenu_schema.js / zenu_matcher.js. Keep both in the same folder as this page.');
+  }
+  $('schemaCount').textContent = FIELDS.length;
+})();
+</script>
+</body>
+</html>

@@ -485,7 +485,22 @@ class VaultREProcessor:
                         if atype == 'acre': return area * 4046.86
                         return area
                     zenu_output[target_field] = base_df['propertyid'].apply(calc_land)
-                    
+
+                elif target_field.lower() == "listing_land_size_system":
+                    # Land size unit of measure from Properties.LandAreaType.
+                    # Zenu only accepts sqm / acre / hectare / square (blank defaults to sqm).
+                    def map_land_system(pid):
+                        atype = str(get_prop_val(pid, 'landareatype')).strip().lower()
+                        if atype in ['nan', 'none', 'null', '']: return pd.NA
+                        if atype.startswith('hectare'): return 'hectare'
+                        if atype.startswith('acre'): return 'acre'
+                        # "squares" is the AU building-area unit; "square metres" is not
+                        if atype.startswith('square') and 'metre' not in atype and 'meter' not in atype:
+                            return 'square'
+                        return 'sqm'
+                    zenu_output[target_field] = base_df['propertyid'].apply(map_land_system)
+
+
                 elif target_field.lower() == "property_building_name":
                     def get_bldg(pid):
                         b_id = str(get_prop_val(pid, 'buildingid')).replace('.0', '').strip()
@@ -1625,7 +1640,8 @@ class VaultREProcessor:
                     "property_identifier", "property_type", "property_unit_number", "property_street_number",
                     "property_street_name", "property_suburb", "property_postcode", "property_state",
                     "property_full_address", "property_bedrooms", "property_bathrooms", "property_category",
-                    "property_land_size_m2", "property_year_built", "property_toilets", "property_garages",
+                    "property_land_size_m2", "listing_land_size_system", "property_year_built",
+                    "property_toilets", "property_garages",
                     "property_carports", "property_open_parking_spaces", "property_modified_date",
                     "property_building_name", "property_sale_method", "property_appraisal_date",
                     "property_timeline_status", "property_team_member_1", "property_team_member_2",

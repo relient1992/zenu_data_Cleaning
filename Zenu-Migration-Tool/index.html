@@ -226,6 +226,10 @@
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1-4l-4 4m0 0L8 3m4 4V3"></path></svg>
                         Consolidate Excel
                     </button>
+                    <a href="smart_mapper.html" onclick="closeHeaderMenus()" class="text-left px-3 py-2 rounded text-sm font-medium text-amber-400 hover:bg-slate-800 transition-colors flex items-center gap-2.5">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"></path></svg>
+                        Smart Mapper
+                    </a>
                     <button type="button" onclick="closeHeaderMenus(); openImportPrepModal()" class="text-left px-3 py-2 rounded text-sm font-medium text-rose-400 hover:bg-slate-800 transition-colors flex items-center gap-2.5">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>
                         Import Prep
@@ -625,15 +629,29 @@
             </div>
             
             <h2 class="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-cyan-400 to-emerald-400 mb-2 font-mono tracking-widest uppercase text-center" id="techOverlayTitle">MIGRATION ENGINE ACTIVE</h2>
-            <p class="text-slate-400 font-mono text-xs mb-6 flex items-center justify-center gap-2">
-                <span class="w-2 h-2 rounded-full bg-red-500 animate-ping"></span> 
+            <p class="text-slate-400 font-mono text-xs mb-5 flex items-center justify-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
                 Establishing secure connection to Python backend...
             </p>
 
-            <div class="w-full h-2 bg-app-bg rounded-full overflow-hidden mb-6 border border-app-border relative">
-                <div id="techProgressBar" class="h-full bg-gradient-to-r from-indigo-500 via-cyan-400 to-emerald-400 w-0 transition-all duration-200 ease-out shadow-[0_0_10px_rgba(34,211,238,0.8)] relative">
+            <div class="w-full flex items-end justify-between mb-2 font-mono text-xs gap-4">
+                <span id="techStage" class="text-cyan-400 truncate">Starting up…</span>
+                <span class="text-slate-500 whitespace-nowrap shrink-0">
+                    <span id="techPercent" class="text-white font-bold text-sm">0%</span>
+                    <span class="mx-1.5 text-slate-700">|</span>
+                    <span id="techEta">estimating…</span>
+                </span>
+            </div>
+
+            <div class="w-full h-2.5 bg-app-bg rounded-full overflow-hidden mb-2 border border-app-border relative">
+                <div id="techProgressBar" class="h-full bg-gradient-to-r from-indigo-500 via-cyan-400 to-emerald-400 w-0 transition-all duration-500 ease-out shadow-[0_0_10px_rgba(34,211,238,0.8)] relative">
                     <div class="absolute inset-0 bg-white/20 animate-[shimmer_1s_infinite]"></div>
                 </div>
+            </div>
+
+            <div class="w-full flex items-center justify-between mb-5 font-mono text-[10px] text-slate-600">
+                <span id="techElapsed">elapsed 0s</span>
+                <span id="techPhase">phase 1 of 2 · loading source data</span>
             </div>
 
             <div class="w-full bg-black/90 border border-slate-700 rounded-lg overflow-hidden shadow-[inset_0_0_20px_rgba(0,0,0,0.8)] relative">
@@ -1797,6 +1815,14 @@
             progress.style.width = '0%';
             progress.classList.replace('from-emerald-500', 'from-indigo-500');
             progress.classList.replace('via-emerald-400', 'via-cyan-400');
+
+            shownPct = 0;
+            migrationFinished = false;
+            document.getElementById('techPercent').textContent = '0%';
+            document.getElementById('techStage').textContent = 'Starting up…';
+            document.getElementById('techEta').textContent = 'estimating…';
+            document.getElementById('techElapsed').textContent = 'elapsed 0s';
+            document.getElementById('techPhase').textContent = 'phase 1 of 2 · loading source data';
             
             overlay.classList.remove('hidden');
             overlay.classList.add('flex'); 
@@ -1838,19 +1864,62 @@
             }, 1200); 
         }
 
+        // --- Real progress reporting (driven by the engine, not a timer) ---
+        let shownPct = 0;
+        let migrationFinished = false;
+
+        function fmtDuration(seconds) {
+            const s = Math.max(0, Math.round(seconds));
+            if (s < 60) return `${s}s`;
+            const m = Math.floor(s / 60);
+            const rem = s % 60;
+            if (m < 60) return rem ? `${m}m ${rem}s` : `${m}m`;
+            const h = Math.floor(m / 60);
+            return `${h}h ${m % 60}m`;
+        }
+
+        function applyProgress(p) {
+            const bar = document.getElementById('techProgressBar');
+            const pct = Math.max(0, Math.min(100, Number(p.percent) || 0));
+
+            // Only ever move forward, so the bar never jitters backwards
+            if (pct > shownPct) shownPct = pct;
+            bar.style.width = `${shownPct}%`;
+            document.getElementById('techPercent').textContent = `${Math.round(shownPct)}%`;
+
+            const stage = p.stage || 'Working';
+            document.getElementById('techStage').textContent =
+                p.detail ? `${stage} — ${p.detail}` : stage;
+
+            const elapsed = Number(p.elapsed_seconds) || 0;
+            document.getElementById('techElapsed').textContent = `elapsed ${fmtDuration(elapsed)}`;
+            document.getElementById('techPhase').textContent = shownPct < 40
+                ? 'phase 1 of 2 · loading source data'
+                : 'phase 2 of 2 · transforming & writing';
+
+            // ETA from measured throughput. Needs a few seconds of real work
+            // before the estimate is worth showing.
+            const eta = document.getElementById('techEta');
+            if (shownPct >= 99) {
+                eta.textContent = 'finishing…';
+            } else if (shownPct >= 5 && elapsed > 3) {
+                eta.textContent = `~${fmtDuration(elapsed / shownPct * (100 - shownPct))} left`;
+            } else {
+                eta.textContent = 'estimating…';
+            }
+        }
+
         function pollRealLogs(jobId) {
             const terminal = document.getElementById('terminalLogs');
-            const progress = document.getElementById('techProgressBar');
             let lastLineCount = 0;
-            let fakeProgress = 5; 
-            
-            // Advance the progress bar slowly while we wait for Python
-            progressInterval = setInterval(() => {
-                if(fakeProgress < 95) {
-                    fakeProgress += (Math.random() * 2);
-                    progress.style.width = `${fakeProgress}%`;
-                }
-            }, 800);
+
+            // Ask the engine where it actually is
+            progressInterval = setInterval(async () => {
+                try {
+                    const res = await fetch(`http://127.0.0.1:8000/api/job-progress/${jobId}`);
+                    applyProgress(await res.json());
+                } catch (e) { /* transient - next tick will catch up */ }
+            }, 600);
 
             // Ask the Python API for the log file every 500ms
             pollInterval = setInterval(async () => {
@@ -1874,7 +1943,12 @@
                         lastLineCount = logs.length;
                         
                         const fullLogText = logs.join(" ");
-                        if (fullLogText.includes("Database connection closed.")) {
+                        if (fullLogText.includes("Database connection closed.") && !migrationFinished) {
+                            migrationFinished = true;
+                            shownPct = 100;
+                            document.getElementById('techPercent').textContent = '100%';
+                            document.getElementById('techStage').textContent = 'Complete — all files written';
+                            document.getElementById('techEta').textContent = 'done';
                             closeTechOverlay(jobId);
                             setTimeout(() => {
                                 showNotification("Engine Executed Successfully", `JOB ID: ${jobId}\nYour finalized CSV data structures are now available.`, "success");

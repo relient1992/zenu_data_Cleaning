@@ -145,6 +145,22 @@ async def get_job_logs(job_id: str):
         
     return JSONResponse(content={"logs": [line.strip() for line in lines]})
 
+@app.get("/api/job-progress/{job_id}")
+async def get_job_progress(job_id: str):
+    """Live percentage/stage for the run overlay's progress bar."""
+    idle = {"percent": 0, "stage": "Queued", "detail": "Waiting for the engine to start",
+            "elapsed_seconds": 0, "done": False}
+    progress_path = os.path.join(UPLOAD_DIR, job_id, "progress.json")
+    if not os.path.exists(progress_path):
+        return JSONResponse(content=idle)
+    try:
+        with open(progress_path, "r", encoding="utf-8") as f:
+            return JSONResponse(content=json.load(f))
+    except Exception:
+        # File is written frequently; a torn read just means "try again shortly".
+        return JSONResponse(content=idle)
+
+
 def process_job(job_id: str, workspace: str, json_path: str, source_crm: str, chunk_size: int):
     # Pass chunk_size to the Engine
     engine = MigrationEngine(job_id=job_id, workspace=workspace, source_crm=source_crm, chunk_size=chunk_size)
