@@ -478,7 +478,11 @@ class AgentboxProcessor:
                     prop_df = prop_df.drop_duplicates(subset=['property_id'])
                 
                 if 'property_id' in base_df.columns and 'property_id' in prop_df.columns:
-                    base_df = pd.merge(base_df, prop_df, on='property_id', how='left')
+                    # property.csv also carries last_modified/date_created. Without an
+                    # explicit suffix pandas renames BOTH sides to _x/_y and the
+                    # appraisal's own last_modified disappears, blanking the date.
+                    base_df = pd.merge(base_df, prop_df, on='property_id',
+                                       how='left', suffixes=('', '_prop'))
 
                 lxa_df = pd.read_sql_query('SELECT * FROM "listing_x_agent.csv"', self.conn)
                 lxa_df.columns = lxa_df.columns.str.strip().str.lower()
@@ -487,8 +491,10 @@ class AgentboxProcessor:
                     is_appr = lxa_df['role'].astype(str).str.lower().str.contains('appraisal')
                     appr_lxa = lxa_df[is_appr]
                     for _, row in appr_lxa.iterrows():
-                        lid = row['listing_id']
-                        aid = row['agent_id']
+                        # agent_mapping is keyed by CLEANED STRING ids, so the raw
+                        # int from SQLite never matched and every name came back ''.
+                        lid = re.sub(r'\.0$', '', str(row['listing_id']).strip())
+                        aid = re.sub(r'\.0$', '', str(row['agent_id']).strip())
                         name = agent_mapping.get(aid, '')
                         if name:
                             if lid not in appraisal_agents_map: appraisal_agents_map[lid] = []
@@ -506,8 +512,9 @@ class AgentboxProcessor:
                 
                 if 'property_id' in pxa_df.columns and 'agent_id' in pxa_df.columns:
                     for _, row in pxa_df.iterrows():
-                        pid = str(row['property_id']).replace('.0', '')
-                        aid = row['agent_id']
+                        pid = re.sub(r'\.0$', '', str(row['property_id']).strip())
+                        # same cleaned-string key as agent_mapping (see Appraisal above)
+                        aid = re.sub(r'\.0$', '', str(row['agent_id']).strip())
                         name = agent_mapping.get(aid, '')
                         if name:
                             if pid not in prospect_agents_map: prospect_agents_map[pid] = []
@@ -1236,7 +1243,8 @@ class AgentboxProcessor:
                     idx = int(target_field.split('_')[-1]) - 1
                     def get_agent(pid):
                         if pd.isna(pid): return pd.NA
-                        agents = prospect_agents_map.get(str(pid), [])
+                        key = re.sub(r'\.0$', '', str(pid).strip())
+                        agents = prospect_agents_map.get(key, [])
                         return agents[idx] if len(agents) > idx else pd.NA
                     zenu_output[target_field] = base_df.get('property_id_clean', pd.Series(dtype=object)).apply(get_agent)
                     continue
@@ -1294,6 +1302,13 @@ class AgentboxProcessor:
                         zenu_output[target_field] = pd.NA
                     continue
 
+                elif target_field == "property_timeline_status":
+                    # Comes from listing_appraisal.csv itself. The generic lookup
+                    # fallback further down only covers property.csv, so without
+                    # this branch the column was created but never populated.
+                    zenu_output[target_field] = base_df.get('status', pd.Series(dtype=object))
+                    continue
+
                 elif target_field == "property_type":
                     cat_val = base_df.get('category', pd.Series(dtype=str))
                     zenu_output[target_field] = (cat_val.astype(str)
@@ -1307,7 +1322,8 @@ class AgentboxProcessor:
                     idx = int(target_field.split('_')[-1]) - 1
                     def get_agent(lid):
                         if pd.isna(lid): return pd.NA
-                        agents = appraisal_agents_map.get(lid, [])
+                        key = re.sub(r'\.0$', '', str(lid).strip())
+                        agents = appraisal_agents_map.get(key, [])
                         return agents[idx] if len(agents) > idx else pd.NA
                     zenu_output[target_field] = base_df.get('listing_id', pd.Series(dtype=object)).apply(get_agent)
                     continue
@@ -1500,6 +1516,15 @@ class AgentboxProcessor:
             
         if group_name in ["Prospect Owners", "Appraisal Owners", "Listing Vendor", "Listing Buyer"] and 'role' in base_df.columns:
             zenu_output['source_role'] = base_df['role'].astype(str).str.title()
+
+        # Land size unit of measure: "SQM" wherever a land area was captured.
+        # Sits next to property_land_size_m2 so the pair reads together.
+        if group_name in ["Appraisal", "Prospect"] and 'property_land_size_m2' in zenu_output.columns:
+            land = zenu_output['property_land_size_m2'].astype(str).str.strip().str.lower()
+            has_land = ~land.isin(['', '0', '0.0', 'nan', 'none', 'null', '<na>'])
+            pos = zenu_output.columns.get_loc('property_land_size_m2') + 1
+            zenu_output.insert(pos, 'listing_land_size_system',
+                               has_land.map({True: 'SQM', False: pd.NA}))
 
         def global_cleaner(val):
             if pd.isna(val): 

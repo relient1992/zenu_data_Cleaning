@@ -480,6 +480,8 @@ class RexProcessor:
             'enquiry': self._group_enquiries,
             'inspections': self._group_inspections,
             'inspection': self._group_inspections,
+            'offer': self._group_offer,
+            'offers': self._group_offer,
             'buyer': self._group_buyer,
             'seller': self._group_seller,
             'propertynotes': lambda r: self._process_property_notes(r),
@@ -1149,6 +1151,66 @@ class RexProcessor:
         out['inspection_feedback_price'] = [self._num(indiv_price.get(k)) for k in pairs]
 
         self._export_data("Inspections", out.reset_index(drop=True))
+
+    # ==================================================================
+    # Offer
+    # ==================================================================
+    def _group_offer(self, rules):
+        """Offers only - rows whose feedback.feedback_type_id is 'offer'."""
+        base = self._read_table('feedback_contacts.csv')
+        if base.empty:
+            self.log(f"[{self.job_id}] Rex Offer: feedback_contacts.csv not found.")
+            return
+        if 'feedback_id' not in base.columns:
+            self.log(f"[{self.job_id}] Rex Offer: feedback_contacts.csv has no feedback_id.")
+            return
+        if self.feedback_df.empty:
+            self.log(f"[{self.job_id}] Rex Offer: feedback.csv not found.")
+            return
+
+        base = base.copy()
+        base['_fid'] = self._clean_id(base['feedback_id'])
+        base['_cid'] = self._clean_id(base['contact_id']) if 'contact_id' in base else ''
+
+        # Keep only the feedback rows flagged as an offer.
+        if 'feedback_type_id' in self.feedback_df.columns:
+            offer_ids = set(self.feedback_df.index[
+                self.feedback_df['feedback_type_id'].astype(str).str.strip().str.lower() == 'offer'])
+            before = len(base)
+            base = base[base['_fid'].isin(offer_ids)]
+            self.log(f"[{self.job_id}] Rex Offer: kept {len(base)} of {before} rows "
+                     f"where feedback_type_id = offer.")
+        else:
+            self.log(f"[{self.job_id}] Rex Offer: feedback.csv has no feedback_type_id column.")
+            return
+        if base.empty:
+            return
+
+        # "17279317_1, _2, _3" - running count within each feedback_id
+        base['_seq'] = base.groupby('_fid').cumcount() + 1
+
+        def fb(fid, col):
+            if col not in self.feedback_df.columns or fid not in self.feedback_df.index:
+                return pd.NA
+            return self.feedback_df.at[fid, col]
+
+        out = pd.DataFrame(index=base.index)
+        out['contact_identifier'] = base['_cid'].apply(lambda v: self._contact_ident(v))
+        out['zenu_contact_id'] = pd.NA
+
+        listing_ids = base['_fid'].apply(lambda f: self._sid(fb(f, 'listing_id')))
+        out['Listing ID/Property ID'] = self._blank(listing_ids)
+        out['property_identifier'] = self._blank(
+            pd.Series([self._property_ident(listing_id=l) for l in listing_ids], index=out.index))
+        out['zenu_property_id'] = pd.NA
+
+        out['offer_identifier'] = [f"{f}_{s}" for f, s in zip(base['_fid'], base['_seq'])]
+        out['offer_team_member_1'] = base['_fid'].apply(
+            lambda f: self._clean_text(fb(f, 'agent_name')))
+        out['offer_date'] = base['_fid'].apply(lambda f: self._date_only(fb(f, 'date_of')))
+        out['offer_price'] = base['_fid'].apply(lambda f: self._num(fb(f, 'amount_of')))
+
+        self._export_data("Offer", out.reset_index(drop=True))
 
     # ==================================================================
     # 10. Buyer

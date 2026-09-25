@@ -1,0 +1,1497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cross-file tracer — CRM export lookup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --bg:#131b22; --panel:#1a242d; --panel-2:#202c36; --rule:#2c3b47;
+    --ink:#dce4ea; --muted:#8697a5; --key:#5fc2b4; --hit:#f0b44a; --bad:#e4705c;
+    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,sans-serif;
+    --cond:"IBM Plex Sans Condensed","IBM Plex Sans",system-ui,sans-serif;
+    --topH:190px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
+  button,input,select{font-family:inherit;font-size:inherit;color:inherit}
+  button{cursor:pointer}
+  :focus-visible{outline:2px solid var(--key);outline-offset:2px}
+
+  .shell{display:flex;flex-direction:column;min-height:100%}
+  .topbar{position:sticky;top:0;z-index:30;background:var(--bg);border-bottom:1px solid var(--rule);padding:12px 18px 11px}
+  .brand{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+  .brand h1{margin:0;font-family:var(--cond);font-weight:600;font-size:19px;letter-spacing:.02em}
+  .brand .sub{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+  .brand .spacer{flex:1}
+  .topbtns{display:flex;gap:8px;flex-wrap:wrap}
+  .btn{background:var(--panel-2);border:1px solid var(--rule);border-radius:2px;padding:6px 11px;font-family:var(--mono);font-size:11.5px;letter-spacing:.02em}
+  .btn:hover{border-color:var(--key);color:#fff}
+  .btn[disabled]{opacity:.4;cursor:not-allowed}
+  .btn.go{background:var(--key);border-color:var(--key);color:#0d1519;font-weight:600}
+  .btn.hint{border-color:rgba(240,180,74,.5);color:var(--hit);background:rgba(240,180,74,.07)}
+  .btn.hint:hover{border-color:var(--hit);color:var(--hit)}
+
+  /* ---------- query builder ---------- */
+  .qb{border:1px solid var(--rule);border-radius:2px;background:var(--panel);padding:9px 10px}
+  .qbtop{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+  .qblabel{font-family:var(--cond);text-transform:uppercase;letter-spacing:.11em;font-size:10px;color:var(--muted);font-weight:600}
+  .cond{display:flex;gap:7px;align-items:stretch;margin-bottom:7px;flex-wrap:wrap}
+  .cond:last-of-type{margin-bottom:0}
+  .cond .joiner{font-family:var(--mono);font-size:10.5px;color:var(--key);align-self:center;width:26px;flex:0 0 26px;text-align:right}
+  .pick{position:relative;flex:0 0 auto}
+  .pickbtn{display:flex;align-items:center;gap:7px;background:var(--panel-2);border:1px solid var(--rule);border-radius:2px;padding:0 10px;height:34px;font-family:var(--mono);font-size:11.5px;max-width:230px}
+  .pickbtn:hover,.pickbtn[aria-expanded="true"]{border-color:var(--key)}
+  .pickbtn .lab{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pickbtn .caret{color:var(--muted);font-size:9px}
+  .pickbtn.on{border-color:rgba(95,194,180,.55);color:var(--key)}
+  .pop{position:absolute;top:38px;left:0;z-index:60;width:290px;max-width:78vw;background:var(--panel-2);border:1px solid var(--key);border-radius:2px;box-shadow:0 12px 30px rgba(0,0,0,.45);padding:8px}
+  .pop input.filter{width:100%;background:var(--bg);border:1px solid var(--rule);border-radius:2px;padding:6px 8px;font-family:var(--mono);font-size:11.5px;margin-bottom:6px}
+  .pop .opts{max-height:250px;overflow:auto}
+  .opt{display:flex;align-items:center;gap:8px;width:100%;background:none;border:0;padding:5px 6px;text-align:left;font-family:var(--mono);font-size:11.5px;border-radius:2px}
+  .opt:hover{background:var(--panel)}
+  .opt .box{width:12px;height:12px;flex:0 0 12px;border:1px solid var(--muted);border-radius:1px;display:inline-block}
+  .opt[aria-checked="true"] .box{background:var(--key);border-color:var(--key)}
+  .opt .cnt{margin-left:auto;color:var(--muted);font-size:10px}
+  .pop .popfoot{display:flex;gap:6px;margin-top:7px;border-top:1px solid var(--rule);padding-top:7px}
+  .linkbtn{background:none;border:0;padding:2px 4px;font-family:var(--mono);font-size:10.5px;color:var(--muted);text-decoration:underline;text-underline-offset:2px}
+  .linkbtn:hover{color:var(--key)}
+
+  select.op{background:var(--panel-2);border:1px solid var(--rule);border-radius:2px;height:34px;padding:0 6px;font-family:var(--mono);font-size:11.5px}
+  select.op:hover{border-color:var(--key)}
+  .valwrap{flex:1;min-width:180px;display:flex;align-items:center;background:var(--panel-2);border:1px solid var(--rule);border-radius:2px}
+  .valwrap:focus-within{border-color:var(--key)}
+  .valwrap .glyph{font-family:var(--mono);color:var(--key);padding:0 9px;font-size:12px}
+  .valwrap input{flex:1;background:none;border:0;font-family:var(--mono);font-size:14px;padding:7px 9px 7px 0;min-width:0}
+  .valwrap input:focus{outline:none}
+  .valwrap input::placeholder{color:#5d6f7c}
+  .xbtn{background:var(--panel-2);border:1px solid var(--rule);border-radius:2px;width:34px;height:34px;color:var(--muted);font-family:var(--mono)}
+  .xbtn:hover{border-color:var(--bad);color:var(--bad)}
+  .toggle{display:flex;border:1px solid var(--rule);border-radius:2px;overflow:hidden}
+  .toggle button{background:var(--panel-2);border:0;padding:0 10px;height:26px;font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+  .toggle button[aria-pressed="true"]{background:var(--key);color:#0d1519;font-weight:600}
+  .qbfoot{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:9px;padding-top:8px;border-top:1px solid var(--rule)}
+  .qbfoot .spacer{flex:1}
+  .status{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-top:8px;min-height:16px}
+  .status b{color:var(--ink);font-weight:500}
+  .status .warn{color:var(--hit)}
+
+  .cols{display:flex;flex:1;align-items:flex-start}
+  .rail{width:262px;flex:0 0 262px;border-right:1px solid var(--rule);padding:14px 0 40px;position:sticky;top:calc(var(--topH) + 8px);align-self:flex-start;max-height:calc(100vh - var(--topH) - 16px);overflow:auto}
+  .main{flex:1;min-width:0;padding:14px 18px 60px}
+  .eyebrow{font-family:var(--cond);text-transform:uppercase;letter-spacing:.12em;font-size:10.5px;color:var(--muted);font-weight:600;margin:0 0 8px}
+  .rail .eyebrow{padding:0 14px}
+
+  .filecard{border:1px solid var(--rule);border-left:2px solid var(--rule);background:var(--panel);margin:0 14px 8px;padding:9px 10px;border-radius:2px}
+  .filecard.active{border-left-color:var(--key)}
+  .filecard .fname{font-family:var(--mono);font-size:12px;word-break:break-all;background:none;border:0;padding:0;text-align:left;width:100%}
+  .filecard .fname:hover{color:var(--key)}
+  .filecard .fmeta{font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-top:4px}
+  .filecard .keys{margin-top:6px;display:flex;flex-wrap:wrap;gap:4px}
+  .keychip{font-family:var(--mono);font-size:10px;color:var(--key);border:1px solid rgba(95,194,180,.35);border-radius:2px;padding:1px 5px}
+  .drop{margin:0 14px 12px;border:1px dashed var(--rule);border-radius:2px;padding:14px 12px;text-align:center;color:var(--muted);font-size:12.5px}
+  .drop.over{border-color:var(--key);color:var(--ink);background:var(--panel)}
+  .drop label{color:var(--key);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+
+  .trace{border:1px solid var(--rule);background:var(--panel);border-radius:2px;padding:10px 12px;margin-bottom:16px}
+  .tracewire{display:flex;align-items:center;flex-wrap:wrap;row-gap:8px}
+  .hop{display:flex;align-items:center;gap:7px;background:var(--panel-2);border:1px solid var(--rule);border-radius:2px;padding:4px 9px;font-family:var(--mono);font-size:11.5px}
+  .hop:hover{border-color:var(--key)}
+  .hop .hf{color:var(--muted)}
+  .hop[aria-current="true"]{border-color:var(--key);background:rgba(95,194,180,.09)}
+  .wire{width:22px;height:1px;background:var(--key);opacity:.55;flex:0 0 22px}
+
+  .group{border:1px solid var(--rule);border-radius:2px;margin-bottom:14px;background:var(--panel);overflow:hidden}
+  .ghead{display:flex;align-items:center;gap:10px;padding:8px 11px;background:var(--panel-2);border-bottom:1px solid var(--rule);flex-wrap:wrap}
+  .ghead .gname{font-family:var(--mono);font-size:12.5px}
+  .ghead .gcount{font-family:var(--mono);font-size:11px;color:var(--key)}
+  .ghead .gspacer{flex:1}
+  .hit{display:grid;grid-template-columns:minmax(120px,170px) 1fr;gap:12px;align-items:baseline;width:100%;text-align:left;background:none;border:0;border-top:1px solid rgba(44,59,71,.6);padding:7px 11px;font-family:var(--mono);font-size:12px}
+  .hit:first-of-type{border-top:0}
+  .hit:hover{background:var(--panel-2)}
+  .hit .col{color:var(--muted);font-size:10.5px;font-family:var(--cond);text-transform:uppercase;letter-spacing:.08em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .hit .val{word-break:break-word}
+  .hit .ctx{color:var(--muted);display:block;font-size:11px;margin-top:2px}
+  mark{background:rgba(240,180,74,.22);color:var(--hit);padding:0 1px;border-radius:1px}
+  .more{padding:7px 11px;font-family:var(--mono);font-size:11px;color:var(--muted);border-top:1px solid var(--rule)}
+
+  .record{border:1px solid var(--rule);border-radius:2px;background:var(--panel);margin-bottom:14px}
+  .record.primary{border-left:2px solid var(--key)}
+  .rectools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+  .rectip{font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+  .rhead .tag{font-family:var(--cond);text-transform:uppercase;letter-spacing:.1em;font-size:9.5px;color:var(--key);border:1px solid rgba(95,194,180,.4);border-radius:2px;padding:1px 6px}
+  .rhead{padding:11px 13px;border-bottom:1px solid var(--rule);background:var(--panel-2);display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .rhead .rname{font-family:var(--mono);font-size:13px}
+  .rhead .rspacer{flex:1}
+  .field{display:grid;grid-template-columns:200px 1fr;gap:14px;padding:9px 13px;border-top:1px solid rgba(44,59,71,.6)}
+  .field:first-child{border-top:0}
+  .flabel{font-family:var(--cond);text-transform:uppercase;letter-spacing:.09em;font-size:10.5px;color:var(--muted);font-weight:600;padding-top:2px;word-break:break-word}
+  .fval{font-family:var(--mono);font-size:12.5px;word-break:break-word}
+  .fval .empty{color:#54646f}
+  .joins{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;align-items:center}
+  .joins .jlead{font-family:var(--cond);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+  .jbadge{display:inline-flex;align-items:center;gap:6px;background:rgba(95,194,180,.08);border:1px solid rgba(95,194,180,.4);border-radius:2px;padding:2px 7px;font-family:var(--mono);font-size:10.5px;color:var(--key)}
+  .jbadge:hover{background:rgba(95,194,180,.18)}
+  .jbadge .jn{color:var(--muted)}
+  .jbadge.weak{border-color:var(--rule);color:var(--muted)}
+  .ghosttoggle{margin:10px 13px 14px;background:none;border:1px dashed var(--rule);border-radius:2px;padding:6px 10px;font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .ghosttoggle:hover{color:var(--ink);border-color:var(--key)}
+
+  .scroller{overflow:auto;max-width:100%}
+  table.grid.one tbody tr:hover td{background:var(--panel-2);cursor:default}
+  table.grid td.keycell{color:var(--ink)}
+  table.grid td.jcell{color:var(--key);cursor:pointer;text-decoration:underline dotted rgba(95,194,180,.55);text-underline-offset:3px}
+  table.grid td.jcell:hover{background:rgba(95,194,180,.14)}
+  .relbar{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;padding:8px 11px;background:var(--panel-2);border-bottom:1px solid var(--rule);border-top:1px solid var(--rule)}
+  .relbar .rname{font-family:var(--mono);font-size:12px}
+  .relbar .via{font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+  .relbar .rcount{font-family:var(--mono);font-size:11px;color:var(--key)}
+  .relnote{padding:8px 11px;font-family:var(--mono);font-size:11px;color:var(--muted)}
+  table.grid{border-collapse:collapse;font-family:var(--mono);font-size:11.5px}
+  table.grid th,table.grid td{border:1px solid var(--rule);padding:4px 8px;text-align:left;white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis}
+  table.grid th{background:var(--panel-2);font-family:var(--cond);text-transform:uppercase;letter-spacing:.08em;font-size:10.5px;color:var(--muted);position:sticky;top:0}
+  table.grid tbody tr:hover td{background:var(--panel-2);cursor:pointer}
+
+  .link{display:grid;grid-template-columns:1fr auto;gap:12px;padding:8px 11px;border-top:1px solid rgba(44,59,71,.6);font-family:var(--mono);font-size:11.5px;align-items:center}
+  .link:first-child{border-top:0}
+  .link .arrow{color:var(--key);padding:0 6px}
+  .bar{width:110px;height:6px;background:var(--panel-2);border:1px solid var(--rule);border-radius:1px;overflow:hidden}
+  .bar i{display:block;height:100%;background:var(--key)}
+  .pct{color:var(--muted);font-size:10.5px;min-width:118px;text-align:right}
+
+  /* modal shell */
+  .modalback{position:fixed;inset:0;z-index:100;background:rgba(8,12,16,.74);display:flex;align-items:flex-start;justify-content:center;padding:5vh 14px}
+  .modal{background:var(--panel);border:1px solid var(--rule);border-radius:2px;width:min(1040px,97vw);max-height:90vh;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,.5)}
+  .modalhead{display:flex;align-items:center;gap:10px;padding:11px 13px;border-bottom:1px solid var(--rule);background:var(--panel-2);flex-wrap:wrap}
+  .modalhead h3{margin:0;font-family:var(--cond);font-size:14px;letter-spacing:.03em;font-weight:600}
+  .modalhead .msub{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .modalhead .mspacer{flex:1}
+  .modalbody{overflow:auto;padding:12px 13px}
+  .modalbody.flush{padding:0}
+  .modalfoot{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 13px;border-top:1px solid var(--rule);background:var(--panel-2)}
+  .modalfoot .mspacer{flex:1}
+  .ta{width:100%;min-height:150px;background:var(--bg);border:1px solid var(--rule);border-radius:2px;color:var(--ink);font-family:var(--mono);font-size:12.5px;padding:9px 10px;resize:vertical}
+  .ta:focus{outline:none;border-color:var(--key)}
+  .kv{display:grid;grid-template-columns:190px 1fr;gap:12px;padding:6px 0;border-top:1px solid rgba(44,59,71,.6)}
+  .kv:first-child{border-top:0}
+  .kv .k{font-family:var(--cond);text-transform:uppercase;letter-spacing:.09em;font-size:10.5px;color:var(--muted);font-weight:600}
+  .kv .v{font-family:var(--mono);font-size:12.5px;word-break:break-word}
+  .pill{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border-radius:2px;padding:1px 6px;color:var(--muted)}
+  .pill.ok{color:var(--key);border-color:rgba(95,194,180,.45)}
+  .pill.no{color:var(--bad);border-color:rgba(228,112,92,.45)}
+  .hitrow{display:flex;align-items:stretch;border-top:1px solid rgba(44,59,71,.6)}
+  .hitrow:first-of-type{border-top:0}
+  .hitrow .hit{border-top:0;flex:1;min-width:0}
+  .peekbtn{flex:0 0 auto;background:none;border:0;border-left:1px solid rgba(44,59,71,.6);color:var(--muted);font-family:var(--mono);font-size:10.5px;padding:0 11px}
+  .peekbtn:hover{color:var(--key);background:var(--panel-2)}
+  .pinbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;border:1px solid rgba(240,180,74,.4);background:rgba(240,180,74,.06);border-radius:2px;padding:8px 11px;margin-bottom:14px}
+  .pinbar .pcount{font-family:var(--mono);font-size:11.5px;color:var(--hit)}
+  .pinbar .pspacer{flex:1}
+  .filterfield{display:flex;align-items:center;background:var(--panel-2);border:1px solid var(--rule);border-radius:2px;height:26px}
+  .filterfield input{background:none;border:0;font-family:var(--mono);font-size:11px;padding:0 8px;width:160px}
+  .filterfield input:focus{outline:none}
+  .filterfield:focus-within{border-color:var(--key)}
+  kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border-bottom-width:2px;border-radius:3px;padding:1px 5px;background:var(--panel-2);color:var(--ink)}
+  .empty-state{border:1px dashed var(--rule);border-radius:2px;padding:34px 22px;text-align:center;color:var(--muted)}
+  .empty-state h2{font-family:var(--cond);font-size:16px;color:var(--ink);margin:0 0 8px;letter-spacing:.02em}
+  .empty-state p{max-width:56ch;margin:0 auto 6px;font-size:13px}
+  .empty-state code{font-family:var(--mono);font-size:12px;color:var(--key)}
+  .err{color:var(--bad);font-family:var(--mono);font-size:11.5px}
+
+  @media (max-width:900px){
+    .cols{flex-direction:column}
+    .rail{position:static;width:100%;flex:none;max-height:none;border-right:0;border-bottom:1px solid var(--rule)}
+    .main{padding:14px 12px 60px;width:100%}
+    .field,.hit{grid-template-columns:1fr;gap:2px}
+    .topbar{position:static}
+    .pickbtn{max-width:150px}
+  }
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="shell">
+  <header class="topbar" id="topbar">
+    <div class="brand">
+      <h1>Cross-file tracer</h1>
+      <span class="sub">CRM export lookup · runs entirely in this tab</span>
+      <span class="spacer"></span>
+      <div class="topbtns">
+        <button class="btn" id="btnBatch">Batch lookup</button>
+        <button class="btn" id="btnLinks">Map links</button>
+        <button class="btn" id="btnIndexAll" title="Index every column, not just ID-like ones">Index all columns</button>
+        <button class="btn" id="btnReset">Clear files</button>
+        <button class="btn" id="btnHelp" title="Shortcuts and tips">?</button>
+      </div>
+    </div>
+
+    <div class="qb">
+      <div class="qbtop">
+        <span class="qblabel">Search in</span>
+        <div class="pick" id="filePick"></div>
+        <span class="qblabel" style="margin-left:6px">Rows must match</span>
+        <div class="toggle" role="group" aria-label="Combine conditions">
+          <button id="joinAll" aria-pressed="true">all conditions</button>
+          <button id="joinAny" aria-pressed="false">any condition</button>
+        </div>
+      </div>
+      <div id="conds"></div>
+      <div class="qbfoot">
+        <button class="btn" id="addCond">+ Add condition</button>
+        <button class="btn" id="clearConds">Reset</button>
+        <span class="spacer"></span>
+        <button class="btn go" id="runBtn">Search</button>
+      </div>
+    </div>
+    <div class="status" id="status">No files loaded.</div>
+  </header>
+
+  <div class="cols">
+    <aside class="rail">
+      <p class="eyebrow">Files</p>
+      <div class="drop" id="drop">
+        Drop CSV / XLSX / JSON here<br>
+        or <label for="picker">choose files</label>
+        <input id="picker" type="file" multiple accept=".csv,.tsv,.txt,.xlsx,.xls,.xlsm,.json" hidden>
+      </div>
+      <div id="filelist"></div>
+    </aside>
+    <main class="main">
+      <div id="traceHost"></div>
+      <div id="view"></div>
+    </main>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+/* ============================ state ============================ */
+const OPS = [
+  {v:"contains", label:"contains"},
+  {v:"exact",    label:"is exactly"},
+  {v:"words",    label:"has all words"},
+  {v:"starts",   label:"starts with"},
+  {v:"filled",   label:"has any value", novalue:true},
+  {v:"empty",    label:"is empty",      novalue:true}
+];
+const S = {
+  tables:[], nextId:1,
+  scope:new Set(),            // table ids; empty = all files
+  join:"all",                 // all | any
+  conds:[ newCond() ],
+  view:{kind:"empty"}, trace:[], errors:[],
+  recordMode:"fields",         // fields | table
+  openSet:true,                // open every matched record, not only the clicked one
+  pins:[],                     // [{tableId,row}] gathered while answering a query
+  fieldFilter:""               // narrows the field list on wide records
+};
+function newCond(){ return {fields:new Set(), op:"contains", value:""}; }
+
+const MAX_HITS = 300;
+const NORM = v => String(v==null?"":v).trim().toLowerCase();
+const el = id => document.getElementById(id);
+const fmt = n => n.toLocaleString();
+
+/* ============================ ingest ============================ */
+const drop = el("drop");
+["dragenter","dragover"].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add("over");}));
+["dragleave","drop"].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove("over");}));
+drop.addEventListener("drop",ev=>{ if(ev.dataTransfer.files.length) addFiles(ev.dataTransfer.files); });
+document.addEventListener("dragover",ev=>ev.preventDefault());
+document.addEventListener("drop",ev=>{ ev.preventDefault(); if(ev.dataTransfer&&ev.dataTransfer.files.length) addFiles(ev.dataTransfer.files); });
+el("picker").addEventListener("change",ev=>{ addFiles(ev.target.files); ev.target.value=""; });
+
+async function addFiles(list){
+  for(const f of Array.from(list)){
+    setStatus("Reading <b>"+esc(f.name)+"</b>…");
+    try{
+      const ext=(f.name.split(".").pop()||"").toLowerCase();
+      if(ext==="xlsx"||ext==="xls"||ext==="xlsm") await readWorkbook(f);
+      else if(ext==="json") await readJson(f);
+      else await readDelimited(f);
+    }catch(err){ S.errors.push(f.name+": "+(err&&err.message?err.message:err)); }
+    renderRail(); renderBuilder(); render();
+  }
+  setStatus("");
+  if(hasQuery()) runSearch();
+}
+function readDelimited(file){
+  return new Promise((resolve,reject)=>{
+    let headers=null, rows=[];
+    Papa.parse(file,{skipEmptyLines:"greedy",chunkSize:1024*512,worker:false,
+      chunk(res){
+        let data=res.data;
+        if(!headers) headers=(data.shift()||[]).map((h,i)=>String(h||"").replace(/^\uFEFF/,"").trim()||("col"+(i+1)));
+        for(const r of data) rows.push(r);
+      },
+      complete(){ if(!headers){reject(new Error("file looks empty"));return;} buildTable(file.name,headers,rows); resolve(); },
+      error(e){ reject(e); }});
+  });
+}
+async function readWorkbook(file){
+  const wb=XLSX.read(await file.arrayBuffer(),{type:"array"});
+  wb.SheetNames.forEach(sn=>{
+    const aoa=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,raw:false,defval:""});
+    if(!aoa.length) return;
+    const headers=(aoa.shift()||[]).map((h,i)=>String(h||"").trim()||("col"+(i+1)));
+    buildTable(wb.SheetNames.length>1?file.name+" › "+sn:file.name,headers,aoa);
+  });
+}
+async function readJson(file){
+  let data=JSON.parse(await file.text());
+  if(!Array.isArray(data)){
+    const arr=Object.values(data).find(v=>Array.isArray(v));
+    if(!arr) throw new Error("no array of records found");
+    data=arr;
+  }
+  const headers=[],seen=new Set();
+  data.slice(0,2000).forEach(o=>Object.keys(o||{}).forEach(k=>{if(!seen.has(k)){seen.add(k);headers.push(k);}}));
+  const rows=data.map(o=>headers.map(h=>{const v=(o||{})[h];return v==null?"":(typeof v==="object"?JSON.stringify(v):String(v));}));
+  buildTable(file.name,headers,rows);
+}
+
+/* ============================ build + index ============================ */
+function buildTable(name,headers,rows){
+  const t={id:S.nextId++,name,headers,
+    rows:rows.map(r=>{const o=new Array(headers.length);for(let i=0;i<headers.length;i++)o[i]=r[i]==null?"":String(r[i]);return o;}),
+    hay:[],lower:null,indexes:new Map(),keyCols:new Set(),indexedAll:false};
+  buildHay(t); chooseKeyCols(t); buildIndexes(t);
+  S.tables.push(t);
+}
+function buildHay(t){
+  const rows=t.rows,hay=new Array(rows.length);
+  for(let i=0;i<rows.length;i++) hay[i]="\u0001"+rows[i].join("\u0001").toLowerCase()+"\u0001";
+  t.hay=hay;
+}
+function chooseKeyCols(t){
+  const n=Math.min(t.rows.length,4000);
+  t.headers.forEach((h,ci)=>{
+    const hl=h.toLowerCase().trim();
+    let key=/(^|[\s_\-.\]\)])(id|ids|guid|uuid|ref|reference|code|key|no|num|number)s?$/.test(hl)
+         || /(id|guid|uuid)$/.test(hl.replace(/[\s_\-.]/g,""))
+         || /\b(e-?mail|phone|mobile|abn|acn)\b/.test(hl);
+    if(!key&&n>=20){
+      const seen=new Set();let filled=0,len=0;
+      for(let i=0;i<n;i++){const v=NORM(t.rows[i][ci]);if(!v)continue;filled++;len+=v.length;seen.add(v);}
+      if(filled>=20&&seen.size/filled>0.9&&len/filled<=48) key=true;
+    }
+    if(key) t.keyCols.add(ci);
+  });
+}
+function buildIndexes(t,all){
+  t.indexes=new Map();
+  const cols=all?t.headers.map((_,i)=>i):Array.from(t.keyCols);
+  for(const ci of cols){
+    const m=new Map();
+    for(let i=0;i<t.rows.length;i++){
+      const v=NORM(t.rows[i][ci]); if(!v) continue;
+      const b=m.get(v); if(b) b.push(i); else m.set(v,[i]);
+    }
+    if(m.size) t.indexes.set(ci,m);
+  }
+  t.indexedAll=!!all;
+}
+// lazy per-cell lowercase cache, used by field-scoped conditions
+function lowerCell(t,row,ci){
+  if(!t.lower) t.lower=new Array(t.rows.length);
+  let r=t.lower[row];
+  if(!r){ r=t.lower[row]=new Array(t.headers.length); }
+  let v=r[ci];
+  if(v===undefined){ v=r[ci]=t.rows[row][ci].toLowerCase(); }
+  return v;
+}
+
+/* ============================ query builder UI ============================ */
+function scopedTables(){ return S.scope.size ? S.tables.filter(t=>S.scope.has(t.id)) : S.tables; }
+function headerCatalog(){
+  const map=new Map();  // normalized name -> {name, files:Set}
+  scopedTables().forEach(t=>t.headers.forEach(h=>{
+    const k=NORM(h); if(!k) return;
+    if(!map.has(k)) map.set(k,{name:h,files:new Set()});
+    map.get(k).files.add(t.id);
+  }));
+  return Array.from(map.values()).sort((a,b)=> b.files.size-a.files.size || a.name.localeCompare(b.name));
+}
+function hasQuery(){ return S.conds.some(c=> c.value.trim()!=="" || c.op==="empty" || c.op==="filled"); }
+
+function renderBuilder(){
+  // file scope picker
+  const fp=el("filePick"); fp.innerHTML="";
+  fp.appendChild(makePicker({
+    after:()=>{ renderCondLabels(); runSearchIfReady(); },
+    label:()=> S.scope.size ? (S.scope.size===1 ? shortName(byId(Array.from(S.scope)[0]).name) : S.scope.size+" files") : "All files",
+    count:()=>S.scope.size,
+    options:()=>S.tables.map(t=>({key:String(t.id),name:t.name,meta:fmt(t.rows.length)+" rows"})),
+    isOn:k=>S.scope.has(Number(k)),
+    toggle:k=>{const id=Number(k); S.scope.has(id)?S.scope.delete(id):S.scope.add(id);},
+    clear:()=>{ S.scope.clear(); },
+    clearLabel:"All files",
+    empty:"Load files first."
+  }));
+
+  const host=el("conds"); host.innerHTML="";
+  S.conds.forEach((c,i)=>host.appendChild(condRow(c,i)));
+  measure();
+}
+
+function renderCondLabels(){
+  document.querySelectorAll("#conds .cond").forEach((r,i)=>{
+    const j=r.querySelector(".joiner");
+    if(j) j.textContent = i===0 ? "where" : (S.join==="all"?"and":"or");
+    if(r.sync) r.sync();
+  });
+}
+function condRow(c,i){
+  const row=document.createElement("div"); row.className="cond";
+  const j=document.createElement("span"); j.className="joiner";
+  j.textContent = i===0 ? "where" : (S.join==="all"?"and":"or");
+  row.appendChild(j);
+
+  // field picker
+  const fieldPick=makePicker({
+    after:()=>{ row.sync(); runSearchIfReady(); },
+    label:()=>{
+      if(!c.fields.size) return "Any field";
+      const names=Array.from(c.fields);
+      return names.length<=2 ? names.map(prettyHeader).join(" + ") : names.length+" fields";
+    },
+    count:()=>c.fields.size,
+    options:()=>headerCatalog().map(h=>({key:NORM(h.name),name:h.name,meta:h.files.size+" file"+(h.files.size===1?"":"s")})),
+    isOn:k=>c.fields.has(k),
+    toggle:k=>{
+      const before=c.fields.size;
+      c.fields.has(k)?c.fields.delete(k):c.fields.add(k);
+      if(before<=1 && c.fields.size>1 && c.op==="contains") c.op="words";
+    },
+    clear:()=>{ c.fields.clear(); },
+    clearLabel:"Any field",
+    empty:"No columns yet."
+  });
+  row.appendChild(fieldPick);
+
+  const sel=document.createElement("select"); sel.className="op";
+  OPS.forEach(o=>{const opt=document.createElement("option");opt.value=o.v;opt.textContent=o.label;if(c.op===o.v)opt.selected=true;sel.appendChild(opt);});
+  sel.onchange=()=>{ c.op=sel.value; renderBuilder(); if(hasQuery())runSearch(); else render(); };
+  row.appendChild(sel);
+
+  let inp=null;
+  const noVal=OPS.find(o=>o.v===c.op).novalue;
+  if(!noVal){
+    const w=document.createElement("div"); w.className="valwrap";
+    const g=document.createElement("span"); g.className="glyph"; g.textContent=">";
+    inp=document.createElement("input");
+    inp.type="search"; inp.value=c.value; inp.spellcheck=false; inp.autocomplete="off";
+    inp.placeholder = placeholderFor(c);
+    inp.oninput=debounce(()=>{ c.value=inp.value; runSearch(); },200);
+    row.sync=()=>{
+      sel.value=c.op;
+      inp.placeholder=placeholderFor(c);
+      if(OPS.find(o=>o.v===c.op).novalue) renderBuilder();
+    };
+    inp.onkeydown=e=>{ if(e.key==="Enter"){ c.value=inp.value; runSearch(); } };
+    if(i===0) inp.id="q0";
+    w.append(g,inp); row.appendChild(w);
+  }
+
+  if(!row.sync) row.sync=()=>{ sel.value=c.op; };
+  if(S.conds.length>1){
+    const x=document.createElement("button"); x.className="xbtn"; x.textContent="×";
+    x.title="Remove condition";
+    x.onclick=()=>{ S.conds.splice(i,1); renderBuilder(); runSearch(); };
+    row.appendChild(x);
+  }
+  return row;
+}
+
+function placeholderFor(c){
+  if(c.op==="words") return "e.g. 12 Smith St Parkes — every word must appear";
+  if(c.fields.size) return "value in "+Array.from(c.fields).slice(0,2).map(prettyHeader).join(" / ")+(c.fields.size>2?" …":"");
+  return "listing ID, contact ID, email, phone, address…";
+}
+function runSearchIfReady(){ if(hasQuery()) runSearch(); else { S.view={kind:S.tables.length?"idle":"empty"}; render(); } }
+
+function makePicker(cfg){
+  const wrap=document.createElement("div"); wrap.className="pick";
+  const btn=document.createElement("button"); btn.className="pickbtn"; btn.setAttribute("aria-expanded","false");
+  const draw=()=>{
+    btn.innerHTML='<span class="lab">'+esc(cfg.label())+'</span><span class="caret">▼</span>';
+    btn.classList.toggle("on",cfg.count()>0);
+  };
+  draw();
+  btn.onclick=()=>{
+    const open=btn.getAttribute("aria-expanded")==="true";
+    closeAllPops();
+    if(open) return;
+    btn.setAttribute("aria-expanded","true");
+    wrap.appendChild(buildPop(cfg,draw));
+  };
+  wrap.appendChild(btn);
+  return wrap;
+}
+function buildPop(cfg,draw){
+  const pop=document.createElement("div"); pop.className="pop";
+  // clicks inside the popup must not reach the outside-click closer: repainting the
+  // option list detaches the clicked node, so closest(".pick") would return null
+  pop.addEventListener("click",e=>e.stopPropagation());
+  const filter=document.createElement("input"); filter.className="filter"; filter.placeholder="Filter…"; filter.spellcheck=false;
+  const opts=document.createElement("div"); opts.className="opts";
+  const paint=()=>{
+    const keep=opts.scrollTop;
+    opts.innerHTML="";
+    const q=filter.value.trim().toLowerCase();
+    const list=cfg.options().filter(o=>!q||o.name.toLowerCase().includes(q));
+    if(!list.length){
+      const p=document.createElement("div"); p.style.cssText="padding:8px;color:var(--muted);font-family:var(--mono);font-size:11px";
+      p.textContent=q?"Nothing matches that.":cfg.empty; opts.appendChild(p); return;
+    }
+    list.forEach(o=>{
+      const b=document.createElement("button"); b.className="opt";
+      b.setAttribute("aria-checked",cfg.isOn(o.key));
+      b.innerHTML='<span class="box"></span><span>'+esc(o.name)+'</span><span class="cnt">'+esc(o.meta||"")+'</span>';
+      b.onclick=()=>{ cfg.toggle(o.key); paint(); draw(); if(cfg.after) cfg.after(); };
+      opts.appendChild(b);
+    });
+    opts.scrollTop=keep;
+  };
+  filter.oninput=paint; paint();
+  const foot=document.createElement("div"); foot.className="popfoot";
+  const c=document.createElement("button"); c.className="linkbtn"; c.textContent=cfg.clearLabel;
+  c.onclick=()=>{ cfg.clear(); paint(); draw(); if(cfg.after) cfg.after(); };
+  const d=document.createElement("button"); d.className="linkbtn"; d.textContent="Done";
+  d.onclick=()=>closeAllPops();
+  foot.append(c,d);
+  pop.append(filter,opts,foot);
+  setTimeout(()=>filter.focus(),0);
+  return pop;
+}
+function closeAllPops(){
+  document.querySelectorAll(".pop").forEach(p=>p.remove());
+  document.querySelectorAll('.pickbtn[aria-expanded="true"]').forEach(b=>b.setAttribute("aria-expanded","false"));
+}
+document.addEventListener("click",e=>{ if(!e.target.closest(".pick")) closeAllPops(); });
+document.addEventListener("keydown",e=>{ if(e.key==="Escape"){ if(document.querySelector(".modalback")) closeModal(); else closeAllPops(); } });
+
+el("addCond").onclick=()=>{ S.conds.push(newCond()); renderBuilder(); };
+el("clearConds").onclick=()=>{ S.conds=[newCond()]; S.scope.clear(); S.join="all"; setJoin("all"); renderBuilder(); S.view={kind:S.tables.length?"idle":"empty"}; render(); };
+el("runBtn").onclick=()=>runSearch();
+el("joinAll").onclick=()=>setJoin("all");
+el("joinAny").onclick=()=>setJoin("any");
+function setJoin(j){
+  S.join=j;
+  el("joinAll").setAttribute("aria-pressed",j==="all");
+  el("joinAny").setAttribute("aria-pressed",j==="any");
+  renderBuilder(); if(hasQuery()) runSearch();
+}
+
+/* ============================ search engine ============================ */
+function prep(t,c){
+  const op=c.op, value=c.value.trim().toLowerCase();
+  if(!value && op!=="empty" && op!=="filled") return null;      // inactive condition
+  let cols=null, missing=false;
+  if(c.fields.size){
+    cols=[]; t.headers.forEach((h,i)=>{ if(c.fields.has(NORM(h))) cols.push(i); });
+    if(!cols.length){ missing=true; }
+  }
+  return {op,value,cols,missing,tokens:value.split(/\s+/).filter(Boolean)};
+}
+// returns matched column index, -1 for "matched, no single column", or false
+function testRow(t,row,p){
+  if(p.missing) return false;
+  const cols=p.cols;
+  const n = cols?cols.length:t.headers.length;
+  const at = k => cols?cols[k]:k;
+
+  if(p.op==="words"){
+    let joined="";
+    for(let k=0;k<n;k++) joined+=lowerCell(t,row,at(k))+" ";
+    for(const tk of p.tokens) if(joined.indexOf(tk)===-1) return false;
+    for(let k=0;k<n;k++) if(lowerCell(t,row,at(k)).indexOf(p.tokens[0])!==-1) return at(k);
+    return -1;
+  }
+  if(p.op==="empty"){
+    for(let k=0;k<n;k++) if(lowerCell(t,row,at(k)).trim()!=="") return false;
+    return -1;
+  }
+  if(p.op==="filled"){
+    for(let k=0;k<n;k++) if(lowerCell(t,row,at(k)).trim()!=="") return at(k);
+    return false;
+  }
+  for(let k=0;k<n;k++){
+    const cell=lowerCell(t,row,at(k));
+    if(p.op==="exact"   && cell.trim()===p.value) return at(k);
+    if(p.op==="contains"&& cell.indexOf(p.value)!==-1) return at(k);
+    if(p.op==="starts"  && cell.trimStart().startsWith(p.value)) return at(k);
+  }
+  return false;
+}
+// whole-row prefilter using the prebuilt haystack (only for unscoped conditions)
+function hayReject(t,row,p){
+  if(p.cols||p.missing) return false;
+  const h=t.hay[row];
+  if(p.op==="contains"||p.op==="starts") return h.indexOf(p.value)===-1;
+  if(p.op==="exact") return h.indexOf("\u0001"+p.value+"\u0001")===-1;
+  if(p.op==="words"){ for(const tk of p.tokens) if(h.indexOf(tk)===-1) return true; return false; }
+  return false;
+}
+
+function runSearch(){
+  if(!S.tables.length){ setStatus("Load some files first."); return; }
+  const active=S.conds.map(c=>c).filter(c=> c.value.trim()!=="" || c.op==="empty" || c.op==="filled");
+  if(!active.length){ S.view={kind:"idle"}; render(); return; }
+
+  const tables=scopedTables();
+  const groups=[]; let total=0; const t0=performance.now();
+  const terms=[]; active.forEach(c=>{ if(c.value.trim()) terms.push(...(c.op==="words"?c.value.trim().split(/\s+/):[c.value.trim()])); });
+
+  for(const t of tables){
+    const ps=active.map(c=>prep(t,c)).filter(Boolean);
+    if(!ps.length) continue;
+    const allMode=S.join==="all";
+    if(allMode && ps.some(p=>p.missing)) continue;          // a required field isn't in this file
+    const hits=[]; let count=0;
+
+    for(let i=0;i<t.rows.length;i++){
+      let ok = allMode, col=-1;
+      for(const p of ps){
+        if(allMode && hayReject(t,i,p)){ ok=false; break; }
+        const r=testRow(t,i,p);
+        if(allMode){ if(r===false){ ok=false; break; } if(col<0&&r>=0) col=r; }
+        else if(r!==false){ ok=true; if(col<0&&r>=0) col=r; break; }
+      }
+      if(!ok) continue;
+      count++;
+      if(hits.length<MAX_HITS) hits.push({row:i,col});
+    }
+    if(count) groups.push({t,hits,count});
+    total+=count;
+  }
+  S.view={kind:"results",groups,total,terms,ms:Math.round(performance.now()-t0)};
+  render();
+  const skipped=tables.length-groups.length;
+  setStatus("<b>"+fmt(total)+"</b> row"+(total===1?"":"s")+" matched in "+groups.length+" of "+tables.length+" searched file"+(tables.length===1?"":"s")+
+            " · "+S.view.ms+" ms"+(S.scope.size?' · <span class="warn">file filter on</span>':""));
+}
+
+/* ============================ joins ============================ */
+// honours the "Search in" file filter: a record's links only point at files you are looking at
+function joinsFor(value,skipTableId,skipCol){
+  const v=NORM(value),out=[];
+  if(!v) return out;
+  for(const t of scopedTables()){
+    for(const [ci,m] of t.indexes){
+      if(t.id===skipTableId&&ci===skipCol) continue;
+      const rows=m.get(v);
+      if(rows&&rows.length) out.push({t,ci,rows});
+    }
+  }
+  out.sort((a,b)=>a.rows.length-b.rows.length);
+  return out;
+}
+function mapLinks(){
+  const links=[], scoped=scopedTables();
+  for(const a of scoped) for(const [ac,am] of a.indexes)
+    for(const b of scoped){
+      if(b.id===a.id) continue;
+      for(const [bc,bm] of b.indexes){
+        if(am.size>bm.size) continue;
+        let matched=0,checked=0;
+        for(const k of am.keys()){ checked++; if(bm.has(k)) matched++; if(checked>=20000) break; }
+        if(matched<2) continue;
+        const pct=matched/checked;
+        if(pct<0.25) continue;
+        links.push({a,ac,b,bc,matched,checked,pct});
+      }
+    }
+  links.sort((x,y)=>y.pct-x.pct||y.matched-x.matched);
+  S.view={kind:"links",links:links.slice(0,120)}; render();
+}
+el("btnLinks").onclick=()=>{
+  if(scopedTables().length<2){ setStatus(S.scope.size?"The file filter leaves fewer than two files to compare.":"Load at least two files to map links."); return; }
+  setStatus("Comparing key columns…"); setTimeout(()=>{ mapLinks(); setStatus(""); },10);
+};
+el("btnIndexAll").onclick=()=>{
+  if(!S.tables.length) return;
+  setStatus("Indexing every column…");
+  setTimeout(()=>{ S.tables.forEach(t=>buildIndexes(t,true)); renderRail(); render(); setStatus("Every column indexed. Joins now cover all fields."); },10);
+};
+el("btnReset").onclick=()=>{
+  S.tables=[]; S.trace=[]; S.errors=[]; S.scope.clear(); S.conds=[newCond()];
+  S.view={kind:"empty"}; renderRail(); renderBuilder(); render(); setStatus("No files loaded.");
+};
+
+/* ============================ trace ============================ */
+function pushHop(tableId,row,set){
+  const t=byId(tableId);
+  S.trace.push({tableId,row,label:hopLabel(t,row)});
+  S.view={kind:"record",tableId,row,set:set&&set.length>1?set:null}; render();
+  window.scrollTo({top:0,behavior:"smooth"});
+}
+// every row the current search matched, clicked one first
+function matchSet(groups,tableId,row){
+  const out=[{tableId,row}];
+  groups.forEach(g=>g.hits.forEach(h=>{
+    if(g.t.id===tableId&&h.row===row) return;
+    out.push({tableId:g.t.id,row:h.row});
+  }));
+  return out;
+}
+function hopLabel(t,row){
+  const ci=Array.from(t.keyCols)[0];
+  return {file:shortName(t.name), val:(ci!=null?t.rows[row][ci]:"")||("row "+(row+2))};
+}
+function gotoHop(i){
+  S.trace=S.trace.slice(0,i+1);
+  const h=S.trace[i]; S.view={kind:"record",tableId:h.tableId,row:h.row}; render();
+}
+function copyTrace(){
+  const lines=["Trace — "+new Date().toLocaleString(),""];
+  S.trace.forEach((h,i)=>{
+    const t=byId(h.tableId);
+    lines.push((i+1)+". "+t.name+"  (row "+(h.row+2)+" in sheet)");
+    t.headers.forEach((hd,ci)=>{ const v=t.rows[h.row][ci]; if(v!=="") lines.push("     "+hd+": "+v); });
+    lines.push("");
+  });
+  copy(lines.join("\n"),"Trace copied — paste it into your reply to the client.");
+}
+
+/* ============================ render ============================ */
+function render(){
+  renderTrace();
+  renderPins(el("traceHost"));
+  const host=el("view"); host.innerHTML="";
+  const v=S.view;
+  if(v.kind==="empty") host.appendChild(emptyState());
+  else if(v.kind==="idle") host.appendChild(idleState());
+  else if(v.kind==="results") host.appendChild(resultsView(v));
+  else if(v.kind==="record") host.appendChild(recordView(v));
+  else if(v.kind==="browse") host.appendChild(browseView(v));
+  else if(v.kind==="links") host.appendChild(linksView(v));
+  else if(v.kind==="pins") host.appendChild(pinsView());
+  if(S.errors.length){
+    const p=document.createElement("p"); p.className="err";
+    p.textContent="Could not read: "+S.errors.join(" · "); host.appendChild(p);
+  }
+}
+function renderTrace(){
+  const host=el("traceHost"); host.innerHTML="";
+  if(!S.trace.length) return;
+  const box=document.createElement("div"); box.className="trace";
+  const eb=document.createElement("p"); eb.className="eyebrow"; eb.textContent="Trace";
+  const wire=document.createElement("div"); wire.className="tracewire";
+  S.trace.forEach((h,i)=>{
+    if(i) wire.appendChild(Object.assign(document.createElement("span"),{className:"wire"}));
+    const b=document.createElement("button"); b.className="hop";
+    if(i===S.trace.length-1) b.setAttribute("aria-current","true");
+    b.innerHTML='<span class="hf">'+esc(h.label.file)+'</span><span class="hv">'+esc(h.label.val)+'</span>';
+    b.onclick=()=>gotoHop(i);
+    wire.appendChild(b);
+  });
+  const tools=document.createElement("div");
+  tools.style.cssText="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap";
+  tools.append(mkBtn("Copy trace",copyTrace),mkBtn("Clear trace",()=>{S.trace=[];render();}));
+  box.append(eb,wire,tools); host.appendChild(box);
+}
+function emptyState(){
+  const d=document.createElement("div"); d.className="empty-state";
+  d.innerHTML="<h2>Load an export set to start tracing</h2>"+
+    "<p>Drop every related file from the same export at once — contacts, listings, enquiries, notes. "+
+    "Each file keeps its own columns; nothing is merged and nothing leaves your browser.</p>"+
+    "<p>Then search. Point a condition at one file and one field, or at several fields at once — "+
+    "<b>has all words</b> across Unit + Street + Suburb finds an address that's been split apart.</p>"+
+    "<p><code>CSV · TSV · XLSX (one table per sheet) · JSON</code></p>";
+  return d;
+}
+function idleState(){
+  const d=document.createElement("div"); d.className="empty-state";
+  const rows=S.tables.reduce((a,t)=>a+t.rows.length,0);
+  d.innerHTML="<h2>"+fmt(S.tables.length)+" file"+(S.tables.length===1?"":"s")+" ready · "+fmt(rows)+" rows</h2>"+
+    "<p>Type a value above, or open a file on the left to browse it, or press <b>Map links</b> to see which columns join which files.</p>";
+  return d;
+}
+function resultsView(v){
+  const frag=document.createDocumentFragment();
+  const head=document.createElement("p"); head.className="eyebrow";
+  head.textContent=fmt(v.total)+" row"+(v.total===1?"":"s")+" across "+v.groups.length+" file"+(v.groups.length===1?"":"s")+" · "+v.ms+" ms";
+  frag.appendChild(head);
+  if(!v.groups.length){
+    const d=document.createElement("div"); d.className="empty-state";
+    d.innerHTML="<h2>No row matched</h2><p>Loosen it: switch an operator to <b>contains</b> or <b>has all words</b>, "+
+      "widen the field back to <b>Any field</b>, or set the match to <b>any condition</b>.</p>";
+    frag.appendChild(d); return frag;
+  }
+  v.groups.forEach(g=>{
+    const box=document.createElement("div"); box.className="group";
+    const gh=document.createElement("div"); gh.className="ghead";
+    gh.innerHTML='<span class="gname">'+esc(g.t.name)+'</span><span class="gcount">'+fmt(g.count)+' row'+(g.count===1?"":"s")+'</span><span class="gspacer"></span>';
+    gh.appendChild(mkBtn("Export matches",()=>exportRows(g.t,g.hits.map(h=>h.row))));
+    box.appendChild(gh);
+    g.hits.forEach(h=>{
+      const wrapRow=document.createElement("div"); wrapRow.className="hitrow";
+      const b=document.createElement("button"); b.className="hit";
+      const cn=document.createElement("span"); cn.className="col";
+      cn.textContent=h.col>=0?g.t.headers[h.col]:"row";
+      const val=document.createElement("span"); val.className="val";
+      val.appendChild(highlight(h.col>=0?g.t.rows[h.row][h.col]:"(matched on the whole row)",v.terms));
+      const ctx=document.createElement("span"); ctx.className="ctx";
+      ctx.appendChild(highlight(rowSummary(g.t,h.row,h.col),v.terms));
+      val.appendChild(ctx);
+      b.append(cn,val);
+      b.onclick=()=>pushHop(g.t.id,h.row,matchSet(v.groups,g.t.id,h.row));
+      const pk=document.createElement("button"); pk.className="peekbtn"; pk.textContent="peek";
+      pk.title="Look at this row without leaving the results";
+      pk.onclick=()=>peekRecord(g.t.id,h.row);
+      wrapRow.append(b,pk);
+      box.appendChild(wrapRow);
+    });
+    if(g.count>g.hits.length){
+      const m=document.createElement("div"); m.className="more";
+      m.textContent="showing first "+fmt(g.hits.length)+" of "+fmt(g.count)+" — narrow the search or export this file's matches";
+      box.appendChild(m);
+    }
+    frag.appendChild(box);
+  });
+  return frag;
+}
+function rowSummary(t,row,skipCol){
+  const parts=[];
+  for(let c=0;c<t.headers.length&&parts.length<4;c++){
+    if(c===skipCol) continue;
+    const v=t.rows[row][c];
+    if(!v||v.length>40) continue;
+    parts.push(t.headers[c]+" "+v);
+  }
+  return parts.join("  ·  ");
+}
+const SET_CAP=25;
+function layoutBar(){
+  const bar=document.createElement("div"); bar.className="rectools";
+  const lay=document.createElement("div"); lay.className="toggle"; lay.setAttribute("role","group"); lay.setAttribute("aria-label","Record layout");
+  [["fields","fields"],["table","table row"]].forEach(([m,label])=>{
+    const b=document.createElement("button"); b.textContent=label;
+    b.setAttribute("aria-pressed",S.recordMode===m);
+    b.onclick=()=>{ S.recordMode=m; render(); };
+    lay.appendChild(b);
+  });
+  bar.appendChild(lay);
+  if(S.recordMode==="fields"){
+    const ff=document.createElement("div"); ff.className="filterfield";
+    const i=document.createElement("input");
+    i.type="search"; i.placeholder="filter fields…"; i.value=S.fieldFilter; i.spellcheck=false;
+    i.oninput=debounce(()=>{ S.fieldFilter=i.value; render(); const n=document.querySelector(".filterfield input"); if(n){n.focus();n.setSelectionRange(n.value.length,n.value.length);} },220);
+    ff.appendChild(i); bar.appendChild(ff);
+  }
+  return bar;
+}
+function recordView(v){
+  const frag=document.createDocumentFragment();
+  const set=(S.openSet&&v.set&&v.set.length>1)?v.set:[{tableId:v.tableId,row:v.row}];
+  const shown=set.slice(0,SET_CAP);
+
+  // one toolbar for the whole set rather than a duplicate on every card
+  const bar=layoutBar();
+
+  if(v.set&&v.set.length>1){
+    const sw=document.createElement("div"); sw.className="toggle"; sw.setAttribute("role","group"); sw.setAttribute("aria-label","How many records");
+    [[true,"all "+v.set.length+" matches"],[false,"just this one"]].forEach(([m,label])=>{
+      const b=document.createElement("button"); b.textContent=label;
+      b.setAttribute("aria-pressed",S.openSet===m);
+      b.onclick=()=>{ S.openSet=m; render(); };
+      sw.appendChild(b);
+    });
+    bar.appendChild(sw);
+    const n=document.createElement("span"); n.className="rectip";
+    n.textContent=S.openSet
+      ? "the row you clicked is first, then the rest of the matches"
+      : "hiding "+(v.set.length-1)+" other matched row"+(v.set.length===2?"":"s");
+    bar.appendChild(n);
+  }
+  bar.appendChild(scopeHint());
+  frag.appendChild(bar);
+
+  shown.forEach((r,i)=>frag.appendChild(recordCard(byId(r.tableId),r.row,set.length>1&&i===0)));
+  if(set.length>shown.length){
+    const m=document.createElement("p"); m.className="relnote";
+    m.textContent="showing the first "+SET_CAP+" of "+fmt(set.length)+" matched records — narrow the search to see the rest";
+    frag.appendChild(m);
+  }
+
+  // links out to files that aren't already on screen
+  if(S.recordMode==="table"){
+    const onScreen=new Set(shown.map(r=>r.tableId));
+    relatedRows(byId(v.tableId),v.row)
+      .filter(r=>!onScreen.has(r.t.id))
+      .forEach(r=>frag.appendChild(relatedCard(r,byId(v.tableId))));
+  }
+  return frag;
+}
+
+function recordCard(t,row,isPrimary){
+  const box=document.createElement("div"); box.className="record"+(isPrimary?" primary":"");
+  const rh=document.createElement("div"); rh.className="rhead";
+  rh.innerHTML='<span class="rname">'+esc(t.name)+' · sheet row '+(row+2)+'</span>'+
+    (isPrimary?'<span class="tag">you clicked this</span>':'')+'<span class="rspacer"></span>';
+  const pinned=isPinned(t.id,row);
+  const pb=mkBtn(pinned?"Pinned ✓":"Pin",()=>togglePin(t.id,row));
+  if(pinned) pb.classList.add("hint");
+  pb.title=pinned?"Remove from the pinned set":"Collect this row to copy or export later";
+  rh.appendChild(pb);
+  rh.appendChild(mkBtn("Copy record",()=>copy(t.headers.map((h,i)=>h+": "+t.rows[row][i]).filter(l=>!/: $/.test(l)).join("\n"),"Record copied.")));
+  rh.appendChild(mkBtn("Browse this file",()=>{S.view={kind:"browse",tableId:t.id};render();}));
+  box.appendChild(rh);
+
+  if(S.recordMode==="table"){ box.appendChild(recordAsRow(t,row)); return box; }
+
+  const ff=S.fieldFilter.trim().toLowerCase();
+  let hiddenByFilter=0;
+  const empties=[];
+  t.headers.forEach((h,ci)=>{
+    const raw=t.rows[row][ci];
+    if(raw===""){ empties.push(h); return; }
+    if(ff && h.toLowerCase().indexOf(ff)===-1 && raw.toLowerCase().indexOf(ff)===-1){ hiddenByFilter++; return; }
+    const f=document.createElement("div"); f.className="field";
+    const l=document.createElement("div"); l.className="flabel"; l.textContent=h;
+    const val=document.createElement("div"); val.className="fval";
+    const line=document.createElement("div"); line.textContent=raw; val.appendChild(line);
+    const js=joinsFor(raw,t.id,ci);
+    if(js.length){
+      const wrap=document.createElement("div"); wrap.className="joins";
+      const lead=document.createElement("span"); lead.className="jlead"; lead.textContent="also in";
+      wrap.appendChild(lead);
+      js.slice(0,14).forEach(j=>{
+        const b=document.createElement("button"); b.className="jbadge"+(j.rows.length>40?" weak":"");
+        b.innerHTML=esc(shortName(j.t.name))+" · "+esc(j.t.headers[j.ci])+' <span class="jn">'+j.rows.length+'</span>';
+        b.onclick=()=>{
+          if(j.rows.length===1) pushHop(j.t.id,j.rows[0]);
+          else { S.conds=[{fields:new Set(),op:"exact",value:raw}]; renderBuilder(); runSearch(); window.scrollTo({top:0,behavior:"smooth"}); }
+        };
+        wrap.appendChild(b);
+      });
+      val.appendChild(wrap);
+    }
+    f.append(l,val); box.appendChild(f);
+  });
+  if(hiddenByFilter){
+    const n=document.createElement("div"); n.className="relnote";
+    n.textContent=hiddenByFilter+" field"+(hiddenByFilter===1?"":"s")+" hidden by the field filter";
+    box.appendChild(n);
+  }
+  if(empties.length && !ff){
+    const b=document.createElement("button"); b.className="ghosttoggle";
+    const base=empties.length+" empty field"+(empties.length===1?"":"s")+" — show";
+    b.textContent=base; let open=false;
+    b.onclick=()=>{
+      open=!open; b.textContent=open?"hide empty fields":base;
+      if(open){
+        const list=document.createElement("div"); list.className="field";
+        list.innerHTML='<div class="flabel">empty</div><div class="fval"><span class="empty">'+esc(empties.join(", "))+'</span></div>';
+        b.after(list);
+      } else if(b.nextElementSibling) b.nextElementSibling.remove();
+    };
+    box.appendChild(b);
+  }
+  return box;
+}
+// the selected record laid out like its source sheet: headers across, one row of values
+function recordAsRow(t,row){
+  const sc=document.createElement("div"); sc.className="scroller";
+  const tb=document.createElement("table"); tb.className="grid one";
+  const thead=document.createElement("thead"), trh=document.createElement("tr");
+  t.headers.forEach((h,ci)=>{ const th=document.createElement("th"); th.textContent=h+(t.keyCols.has(ci)?" ▸":""); trh.appendChild(th); });
+  thead.appendChild(trh); tb.appendChild(thead);
+  const tbody=document.createElement("tbody"), tr=document.createElement("tr");
+  t.headers.forEach((h,ci)=>{
+    const raw=t.rows[row][ci];
+    const td=document.createElement("td"); td.textContent=raw;
+    if(t.keyCols.has(ci)) td.classList.add("keycell");
+    const js=raw ? joinsFor(raw,t.id,ci) : [];
+    if(js.length){
+      td.classList.add("jcell");
+      td.title="also in "+js.map(j=>shortName(j.t.name)+" · "+j.t.headers[j.ci]+" ("+j.rows.length+")").join(", ")+" — click to follow";
+      td.onclick=()=>{
+        if(js.length===1 && js[0].rows.length===1) pushHop(js[0].t.id,js[0].rows[0]);
+        else { S.conds=[{fields:new Set(),op:"exact",value:raw}]; renderBuilder(); runSearch(); window.scrollTo({top:0,behavior:"smooth"}); }
+      };
+    }
+    tr.appendChild(td);
+  });
+  tbody.appendChild(tr); tb.appendChild(tbody); sc.appendChild(tb);
+  return sc;
+}
+// rows in other files that share one of this record's key values
+function relatedRows(t,row){
+  const out=new Map();
+  const cols = t.keyCols.size ? Array.from(t.keyCols) : t.headers.map((_,i)=>i);
+  for(const ci of cols){
+    const raw=t.rows[row][ci];
+    if(!raw || NORM(raw).length<2) continue;
+    for(const j of joinsFor(raw,t.id,ci)){
+      if(j.rows.length>200) continue;                       // too common to be a real link
+      let e=out.get(j.t.id);
+      if(!e){ e={t:j.t,rows:new Set(),via:new Set()}; out.set(j.t.id,e); }
+      j.rows.forEach(r=>{ if(!(j.t.id===t.id && r===row)) e.rows.add(r); });
+      e.via.add(t.headers[ci]+" → "+j.t.headers[j.ci]);
+    }
+  }
+  return Array.from(out.values()).filter(e=>e.rows.size).sort((a,b)=>a.rows.size-b.rows.size);
+}
+function relatedCard(rel,srcTable){
+  const box=document.createElement("div"); box.className="group";
+  const bar=document.createElement("div"); bar.className="relbar";
+  const rows=Array.from(rel.rows);
+  bar.innerHTML='<span class="rname">'+esc(rel.t.name)+(rel.t.id===srcTable.id?" (same file)":"")+'</span>'+
+    '<span class="rcount">'+fmt(rows.length)+' related row'+(rows.length===1?"":"s")+'</span>'+
+    '<span class="via">via '+esc(Array.from(rel.via).slice(0,3).join(", "))+'</span>';
+  box.appendChild(bar);
+  const sc=document.createElement("div"); sc.className="scroller"; sc.style.maxHeight="46vh";
+  const tb=document.createElement("table"); tb.className="grid";
+  const thead=document.createElement("thead"), trh=document.createElement("tr");
+  rel.t.headers.forEach((h,ci)=>{ const th=document.createElement("th"); th.textContent=h+(rel.t.keyCols.has(ci)?" ▸":""); trh.appendChild(th); });
+  thead.appendChild(trh); tb.appendChild(thead);
+  const tbody=document.createElement("tbody");
+  rows.slice(0,25).forEach(ri=>{
+    const tr=document.createElement("tr");
+    rel.t.rows[ri].forEach(c=>{ const td=document.createElement("td"); td.textContent=c; tr.appendChild(td); });
+    tr.title="Open this record";
+    tr.onclick=()=>pushHop(rel.t.id,ri);
+    tbody.appendChild(tr);
+  });
+  tb.appendChild(tbody); sc.appendChild(tb); box.appendChild(sc);
+  const foot=document.createElement("div"); foot.className="relnote";
+  foot.textContent = rows.length>25 ? "first 25 of "+fmt(rows.length)+" shown — click a row to open it" : "click a row to open it";
+  box.appendChild(foot);
+  const b=mkBtn("Export these rows",()=>exportRows(rel.t,rows));
+  b.style.margin="0 11px 10px"; box.appendChild(b);
+  return box;
+}
+// shown wherever the file filter is quietly narrowing what you can see
+function scopeHint(){
+  const frag=document.createDocumentFragment();
+  const hidden=S.tables.length-S.scope.size;
+  if(!S.scope.size||hidden<1) return frag;
+  const b=mkBtn("links limited to "+S.scope.size+" file"+(S.scope.size===1?"":"s")+" — include all",()=>{
+    S.scope.clear(); renderBuilder(); render();
+  });
+  b.classList.add("hint");
+  b.title=hidden+" other loaded file"+(hidden===1?" is":"s are")+" excluded by the Search in filter";
+  frag.appendChild(b);
+  return frag;
+}
+function browseView(v){
+  const t=byId(v.tableId),frag=document.createDocumentFragment();
+  const box=document.createElement("div"); box.className="group";
+  const gh=document.createElement("div"); gh.className="ghead";
+  gh.innerHTML='<span class="gname">'+esc(t.name)+'</span><span class="gcount">'+fmt(t.rows.length)+' rows · '+t.headers.length+' columns</span><span class="gspacer"></span>';
+  gh.appendChild(mkBtn("Search only this file",()=>{S.scope=new Set([t.id]);renderBuilder();if(hasQuery())runSearch();else{S.view={kind:"idle"};render();}}));
+  gh.appendChild(mkBtn("Export file",()=>exportRows(t,t.rows.map((_,i)=>i))));
+  box.appendChild(gh);
+  const sc=document.createElement("div"); sc.className="scroller"; sc.style.maxHeight="70vh";
+  const tb=document.createElement("table"); tb.className="grid";
+  const thead=document.createElement("thead"),trh=document.createElement("tr");
+  t.headers.forEach((h,ci)=>{const th=document.createElement("th");th.textContent=h+(t.keyCols.has(ci)?" ▸":"");trh.appendChild(th);});
+  thead.appendChild(trh); tb.appendChild(thead);
+  const tbody=document.createElement("tbody");
+  t.rows.slice(0,300).forEach((r,i)=>{
+    const tr=document.createElement("tr");
+    r.forEach(c=>{const td=document.createElement("td");td.textContent=c;tr.appendChild(td);});
+    tr.onclick=()=>pushHop(t.id,i);
+    tbody.appendChild(tr);
+  });
+  tb.appendChild(tbody); sc.appendChild(tb); box.appendChild(sc);
+  if(t.rows.length>300){
+    const m=document.createElement("div"); m.className="more"; m.textContent="first 300 rows shown — search to reach the rest";
+    box.appendChild(m);
+  }
+  frag.appendChild(box); return frag;
+}
+function linksView(v){
+  const frag=document.createDocumentFragment();
+  const p=document.createElement("p"); p.className="eyebrow";
+  p.textContent="Detected joins — read as: this column's values are found in that column";
+  frag.appendChild(p);
+  frag.appendChild(scopeHint());
+  if(!v.links.length){
+    const d=document.createElement("div"); d.className="empty-state";
+    d.innerHTML="<h2>No shared key columns found</h2><p>These files may join through columns that don't look like IDs. Press <b>Index all columns</b> and try again.</p>";
+    frag.appendChild(d); return frag;
+  }
+  const box=document.createElement("div"); box.className="group";
+  v.links.forEach(L=>{
+    const r=document.createElement("div"); r.className="link";
+    const lhs=document.createElement("div");
+    lhs.innerHTML=esc(shortName(L.a.name))+" · <b>"+esc(L.a.headers[L.ac])+'</b><span class="arrow">→</span>'+esc(shortName(L.b.name))+" · <b>"+esc(L.b.headers[L.bc])+"</b>";
+    const right=document.createElement("div"); right.style.cssText="display:flex;align-items:center;gap:10px";
+    const bar=document.createElement("div"); bar.className="bar";
+    const i=document.createElement("i"); i.style.width=Math.round(L.pct*100)+"%"; bar.appendChild(i);
+    const pct=document.createElement("span"); pct.className="pct";
+    pct.textContent=Math.round(L.pct*100)+"% · "+fmt(L.matched)+" of "+fmt(L.checked)+" values";
+    right.append(bar,pct); r.append(lhs,right); box.appendChild(r);
+  });
+  frag.appendChild(box); return frag;
+}
+function renderRail(){
+  const host=el("filelist"); host.innerHTML="";
+  S.tables.forEach(t=>{
+    const c=document.createElement("div");
+    c.className="filecard"+(S.view.tableId===t.id?" active":"");
+    const b=document.createElement("button"); b.className="fname"; b.textContent=t.name;
+    b.onclick=()=>{S.view={kind:"browse",tableId:t.id};renderRail();render();};
+    const m=document.createElement("div"); m.className="fmeta";
+    m.textContent=fmt(t.rows.length)+" rows · "+t.headers.length+" cols · "+(t.indexedAll?"all cols indexed":t.indexes.size+" keys indexed");
+    const k=document.createElement("div"); k.className="keys";
+    Array.from(t.keyCols).slice(0,6).forEach(ci=>{
+      const s=document.createElement("span"); s.className="keychip"; s.textContent=t.headers[ci]; k.appendChild(s);
+    });
+    const acts=document.createElement("div"); acts.style.cssText="display:flex;gap:6px;margin-top:7px;flex-wrap:wrap";
+    acts.appendChild(mkBtn("Profile",()=>profileModal(t.id)));
+    acts.appendChild(mkBtn("Only this file",()=>{ S.scope=new Set([t.id]); renderBuilder(); runSearchIfReady(); }));
+    c.append(b,m,k,acts); host.appendChild(c);
+  });
+  const rows=S.tables.reduce((a,t)=>a+t.rows.length,0);
+  if(S.tables.length) setStatus("<b>"+S.tables.length+"</b> files · <b>"+fmt(rows)+"</b> rows in memory · nothing uploaded");
+}
+
+/* ============================ modals ============================ */
+function closeModal(){ const m=document.querySelector(".modalback"); if(m) m.remove(); }
+function openModal(title,sub,buildBody,buildFoot,flush){
+  closeModal();
+  const back=document.createElement("div"); back.className="modalback";
+  back.onclick=e=>{ if(e.target===back) closeModal(); };
+  const box=document.createElement("div"); box.className="modal";
+  box.setAttribute("role","dialog"); box.setAttribute("aria-modal","true");
+  const head=document.createElement("div"); head.className="modalhead";
+  const h=document.createElement("h3"); h.textContent=title;
+  head.appendChild(h);
+  if(sub){ const sp=document.createElement("span"); sp.className="msub"; sp.textContent=sub; head.appendChild(sp); }
+  head.appendChild(Object.assign(document.createElement("span"),{className:"mspacer"}));
+  head.appendChild(mkBtn("Close",closeModal));
+  const body=document.createElement("div"); body.className="modalbody"+(flush?" flush":"");
+  buildBody(body,{close:closeModal});
+  box.append(head,body);
+  if(buildFoot){
+    const foot=document.createElement("div"); foot.className="modalfoot";
+    buildFoot(foot,{close:closeModal});
+    box.appendChild(foot);
+  }
+  back.appendChild(box); document.body.appendChild(back);
+  const first=box.querySelector("textarea,input,select,button");
+  if(first) setTimeout(()=>first.focus(),0);
+  return box;
+}
+
+// quick look at a row without spending a trace hop on it
+function peekRecord(tableId,row){
+  const t=byId(tableId);
+  openModal("Peek — "+t.name, "sheet row "+(row+2), body=>{
+    t.headers.forEach((h,ci)=>{
+      const v=t.rows[row][ci]; if(v==="") return;
+      const kv=document.createElement("div"); kv.className="kv";
+      const k=document.createElement("div"); k.className="k"; k.textContent=h;
+      const val=document.createElement("div"); val.className="v"; val.textContent=v;
+      kv.append(k,val); body.appendChild(kv);
+    });
+  }, foot=>{
+    foot.appendChild(mkBtn("Open in trace",()=>{ closeModal(); pushHop(tableId,row); }));
+    foot.appendChild(mkBtn(isPinned(tableId,row)?"Unpin":"Pin this row",()=>{ togglePin(tableId,row); closeModal(); }));
+    foot.appendChild(Object.assign(document.createElement("span"),{className:"mspacer"}));
+    foot.appendChild(mkBtn("Copy record",()=>copy(t.headers.map((h,i)=>h+": "+t.rows[row][i]).filter(l=>!/: $/.test(l)).join("\n"),"Record copied.")));
+  });
+}
+
+// paste a client's list of IDs and see which ones actually landed
+function batchModal(){
+  if(!S.tables.length){ setStatus("Load some files first."); return; }
+  let out=null;
+  openModal("Batch lookup","exact match, one value per line", (body,api)=>{
+    const p=document.createElement("p");
+    p.style.cssText="margin:0 0 8px;color:var(--muted);font-size:12.5px";
+    p.textContent="Paste the IDs, emails or references the client sent. Each is looked up exactly across the files you are searching.";
+    const ta=document.createElement("textarea"); ta.className="ta"; ta.id="batchInput";
+    ta.placeholder="L-1001\nL-1002\njane@example.com";
+    const row=document.createElement("div");
+    row.style.cssText="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:9px 0";
+    const lab=document.createElement("span"); lab.className="qblabel"; lab.textContent="Look in";
+    const sel=document.createElement("select"); sel.className="op"; sel.id="batchField";
+    const any=document.createElement("option"); any.value=""; any.textContent="any indexed field"; sel.appendChild(any);
+    headerCatalog().forEach(h=>{ const o=document.createElement("option"); o.value=NORM(h.name); o.textContent=h.name; sel.appendChild(o); });
+    row.append(lab,sel);
+    const res=document.createElement("div"); res.id="batchOut";
+    body.append(p,ta,row,res);
+    ta.onkeydown=e=>{ if((e.metaKey||e.ctrlKey)&&e.key==="Enter") run(); };
+    function run(){
+      out=batchRun(ta.value,sel.value);
+      res.innerHTML="";
+      res.appendChild(batchTable(out));
+    }
+    body._run=run;
+  }, (foot,api)=>{
+    foot.appendChild(mkBtn("Run lookup",()=>{ document.querySelector(".modalbody")._run(); }));
+    foot.appendChild(Object.assign(document.createElement("span"),{className:"mspacer"}));
+    foot.appendChild(mkBtn("Copy missing",()=>{
+      if(!out) return setStatus("Run the lookup first.");
+      const miss=out.rows.filter(r=>!r.total).map(r=>r.raw);
+      copy(miss.join("\n"), miss.length?miss.length+" missing value"+(miss.length===1?"":"s")+" copied.":"Nothing was missing.");
+    }));
+    foot.appendChild(mkBtn("Export report",()=>{
+      if(!out) return setStatus("Run the lookup first.");
+      const q=v=>/[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;
+      const lines=["value,found,total_rows,files"];
+      out.rows.forEach(r=>lines.push([q(r.raw),r.total?"yes":"no",r.total,q(r.where.map(x=>x.file+" ("+x.n+")").join("; "))].join(",")));
+      const blob=new Blob(["\uFEFF"+lines.join("\r\n")],{type:"text/csv;charset=utf-8"});
+      const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="batch_lookup.csv"; a.click();
+      setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+    }));
+  });
+}
+function batchRun(text,fieldKey){
+  const values=text.split(/[\r\n,;\t]+/).map(v=>v.trim()).filter(Boolean);
+  const seen=new Set(), rows=[];
+  const tables=scopedTables();
+  // a chosen column may not be in the key indexes, so index it on the fly
+  const adhoc=new Map();
+  if(fieldKey){
+    tables.forEach(t=>{
+      const cols=[]; t.headers.forEach((h,i)=>{ if(NORM(h)===fieldKey) cols.push(i); });
+      if(!cols.length) return;
+      const m=new Map();
+      cols.forEach(ci=>{
+        const idx=t.indexes.get(ci);
+        if(idx){ for(const [k,v] of idx){ const b=m.get(k); if(b) m.set(k,b.concat(v)); else m.set(k,v.slice()); } }
+        else for(let i=0;i<t.rows.length;i++){ const v=NORM(t.rows[i][ci]); if(!v) continue; const b=m.get(v); if(b) b.push(i); else m.set(v,[i]); }
+      });
+      adhoc.set(t.id,m);
+    });
+  }
+  values.forEach(raw=>{
+    const v=NORM(raw);
+    if(seen.has(v)) return; seen.add(v);
+    const where=[]; let total=0;
+    tables.forEach(t=>{
+      let n=0;
+      if(fieldKey){ const m=adhoc.get(t.id); const b=m&&m.get(v); if(b) n=b.length; }
+      else for(const [,m] of t.indexes){ const b=m.get(v); if(b) n+=b.length; }
+      if(n){ where.push({file:shortName(t.name),n}); total+=n; }
+    });
+    rows.push({raw,v,where,total});
+  });
+  return {rows,found:rows.filter(r=>r.total).length,fieldKey};
+}
+function batchTable(out){
+  const wrap=document.createDocumentFragment();
+  const sum=document.createElement("p");
+  sum.style.cssText="font-family:var(--mono);font-size:12px;margin:12px 0 8px";
+  const missing=out.rows.length-out.found;
+  sum.innerHTML="<b>"+out.found+"</b> of "+out.rows.length+" found"+
+    (missing?' · <span style="color:var(--bad)">'+missing+" not in any searched file</span>":" · none missing");
+  wrap.appendChild(sum);
+  const box=document.createElement("div"); box.className="group";
+  out.rows.forEach(r=>{
+    const line=document.createElement("button"); line.className="hit";
+    line.style.gridTemplateColumns="minmax(120px,200px) 1fr";
+    const a=document.createElement("span"); a.className="val"; a.textContent=r.raw;
+    const b=document.createElement("span"); b.className="val";
+    if(r.total){
+      b.innerHTML='<span class="pill ok">found</span> '+esc(r.where.map(x=>x.file+" ×"+x.n).join("  ·  "));
+    } else b.innerHTML='<span class="pill no">not found</span>';
+    line.append(a,b);
+    line.title="Search this value";
+    line.onclick=()=>{ closeModal(); S.conds=[{fields:new Set(),op:"exact",value:r.raw}]; renderBuilder(); runSearch(); };
+    box.appendChild(line);
+  });
+  wrap.appendChild(box);
+  return wrap;
+}
+
+// per-column health of one file: fill rate, uniqueness, repeats
+function profileModal(tableId){
+  const t=byId(tableId);
+  openModal("Column profile — "+t.name, fmt(t.rows.length)+" rows · "+t.headers.length+" columns", body=>{
+    // paint the dialog first — a wide file takes a moment to count
+    const wait=document.createElement("p"); wait.className="relnote"; wait.textContent="counting values…";
+    body.appendChild(wait);
+    setTimeout(()=>{ wait.remove(); fill(body); },20);
+  function fill(body){
+    const box=document.createElement("div"); box.className="group";
+    t.headers.forEach((h,ci)=>{
+      let filled=0; const counts=new Map();
+      for(let i=0;i<t.rows.length;i++){
+        const v=NORM(t.rows[i][ci]);
+        if(!v) continue;
+        filled++; counts.set(v,(counts.get(v)||0)+1);
+      }
+      let repeats=0, top=[];
+      for(const [k,n] of counts) if(n>1){ repeats++; if(top.length<3) top.push({k,n}); }
+      const pctFill=t.rows.length?Math.round(filled/t.rows.length*100):0;
+      const line=document.createElement("div"); line.className="link";
+      const lhs=document.createElement("div");
+      lhs.innerHTML="<b>"+esc(h)+"</b>"+(t.keyCols.has(ci)?' <span class="pill ok">key</span>':"");
+      const det=document.createElement("div"); det.style.cssText="font-size:10.5px;color:var(--muted);margin-top:3px";
+      det.textContent=pctFill+"% filled · "+fmt(counts.size)+" distinct · "+
+        (repeats?fmt(repeats)+" value"+(repeats===1?"":"s")+" repeated":"all unique");
+      lhs.appendChild(det);
+      if(top.length){
+        const dl=document.createElement("div"); dl.style.cssText="display:flex;gap:5px;flex-wrap:wrap;margin-top:5px";
+        top.forEach(x=>{
+          const b=document.createElement("button"); b.className="jbadge";
+          b.innerHTML=esc(x.k.slice(0,36))+' <span class="jn">×'+x.n+'</span>';
+          b.title="Search this repeated value";
+          b.onclick=()=>{ closeModal(); S.conds=[{fields:new Set([NORM(h)]),op:"exact",value:x.k}]; renderBuilder(); runSearch(); };
+          dl.appendChild(b);
+        });
+        lhs.appendChild(dl);
+      }
+      const right=document.createElement("div"); right.style.cssText="display:flex;align-items:center;gap:10px";
+      const bar=document.createElement("div"); bar.className="bar";
+      const i=document.createElement("i"); i.style.width=pctFill+"%"; bar.appendChild(i);
+      const pct=document.createElement("span"); pct.className="pct"; pct.textContent=fmt(filled)+" / "+fmt(t.rows.length);
+      right.append(bar,pct);
+      line.append(lhs,right); box.appendChild(line);
+    });
+    body.appendChild(box);
+  }
+  }, foot=>{
+    foot.appendChild(mkBtn("Browse this file",()=>{ closeModal(); S.view={kind:"browse",tableId}; render(); }));
+    foot.appendChild(mkBtn("Search only this file",()=>{ closeModal(); S.scope=new Set([tableId]); renderBuilder(); runSearchIfReady(); }));
+  });
+}
+
+function helpModal(){
+  openModal("How to drive this","everything stays in this tab", body=>{
+    const rows=[
+      ["<kbd>/</kbd> or <kbd>Ctrl</kbd>+<kbd>K</kbd>","Jump to the search box"],
+      ["<kbd>Esc</kbd>","Close a popup or dialog"],
+      ["<kbd>?</kbd>","This dialog"],
+      ["Search in","Limit every search, join and link map to chosen files"],
+      ["Field picker","Pick several columns at once — Unit + Street + Suburb"],
+      ["has all words","Every word must appear somewhere in those fields, any order"],
+      ["is empty","Find records that lost a value in migration — e.g. suburb Parkes AND contactId is empty"],
+      ["Add condition","Combine tests with all (AND) or any (OR)"],
+      ["peek","Look at a matched row without spending a trace hop"],
+      ["Pin","Collect rows from different files, then copy or export them as one answer"],
+      ["Batch lookup","Paste a client's list of IDs and see which ones are missing"],
+      ["Profile","Per-column fill rate, distinct values and repeats for one file"],
+      ["Map links","Which column joins which file, and what share of values match"],
+      ["Index all columns","Widen joins beyond ID-like columns when a link runs through an odd field"]
+    ];
+    rows.forEach(([a,b])=>{
+      const kv=document.createElement("div"); kv.className="kv";
+      const k=document.createElement("div"); k.className="k"; k.innerHTML=a;
+      const v=document.createElement("div"); v.className="v"; v.textContent=b;
+      kv.append(k,v); body.appendChild(kv);
+    });
+  });
+}
+
+/* ============================ pins ============================ */
+function isPinned(tableId,row){ return S.pins.some(p=>p.tableId===tableId&&p.row===row); }
+function togglePin(tableId,row){
+  const i=S.pins.findIndex(p=>p.tableId===tableId&&p.row===row);
+  if(i>=0) S.pins.splice(i,1); else S.pins.push({tableId,row});
+  render();
+}
+function pinsText(){
+  const out=[];
+  S.pins.forEach((p,i)=>{
+    const t=byId(p.tableId);
+    out.push((i+1)+". "+t.name+"  (row "+(p.row+2)+")");
+    t.headers.forEach((h,ci)=>{ const v=t.rows[p.row][ci]; if(v!=="") out.push("     "+h+": "+v); });
+    out.push("");
+  });
+  return out.join("\n");
+}
+function renderPins(host){
+  if(!S.pins.length) return;
+  const bar=document.createElement("div"); bar.className="pinbar";
+  const c=document.createElement("span"); c.className="pcount";
+  c.textContent=S.pins.length+" pinned row"+(S.pins.length===1?"":"s");
+  bar.appendChild(c);
+  bar.appendChild(mkBtn("Open them",()=>{ S.view={kind:"pins"}; render(); }));
+  bar.appendChild(mkBtn("Copy all",()=>copy(pinsText(),"Pinned rows copied.")));
+  bar.appendChild(mkBtn("Export",()=>{
+    const q=v=>/[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;
+    const lines=["source_file,sheet_row,field,value"];
+    S.pins.forEach(p=>{
+      const t=byId(p.tableId);
+      t.headers.forEach((h,ci)=>{ const v=t.rows[p.row][ci]; if(v!=="") lines.push([q(t.name),p.row+2,q(h),q(v)].join(",")); });
+    });
+    const blob=new Blob(["\uFEFF"+lines.join("\r\n")],{type:"text/csv;charset=utf-8"});
+    const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="pinned_rows.csv"; a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+  }));
+  bar.appendChild(Object.assign(document.createElement("span"),{className:"pspacer"}));
+  bar.appendChild(mkBtn("Clear pins",()=>{ S.pins=[]; if(S.view.kind==="pins") S.view={kind:S.tables.length?"idle":"empty"}; render(); }));
+  host.appendChild(bar);
+}
+function pinsView(){
+  const frag=document.createDocumentFragment();
+  frag.appendChild(layoutBar());
+  S.pins.forEach(p=>frag.appendChild(recordCard(byId(p.tableId),p.row,false)));
+  return frag;
+}
+
+/* ============================ helpers ============================ */
+function mkBtn(label,fn){const b=document.createElement("button");b.className="btn";b.textContent=label;b.onclick=e=>{e.stopPropagation();fn();};return b;}
+function byId(id){return S.tables.find(t=>t.id===id);}
+function shortName(n){return n.replace(/\.(csv|tsv|txt|xlsx|xls|xlsm|json)$/i,"");}
+function prettyHeader(k){
+  for(const t of S.tables) for(const h of t.headers) if(NORM(h)===k) return h;
+  return k;
+}
+function setStatus(html){el("status").innerHTML=html||"";}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+function highlight(text,terms){
+  const frag=document.createDocumentFragment(); const s=String(text);
+  const list=(terms||[]).filter(Boolean).map(t=>t.toLowerCase()).sort((a,b)=>b.length-a.length);
+  if(!list.length){frag.appendChild(document.createTextNode(s));return frag;}
+  const ls=s.toLowerCase(); let i=0;
+  while(i<s.length){
+    let best=-1,bl=0;
+    for(const t of list){ const at=ls.indexOf(t,i); if(at!==-1&&(best===-1||at<best)){best=at;bl=t.length;} }
+    if(best===-1) break;
+    if(best>i) frag.appendChild(document.createTextNode(s.slice(i,best)));
+    const m=document.createElement("mark"); m.textContent=s.slice(best,best+bl); frag.appendChild(m);
+    i=best+bl;
+  }
+  frag.appendChild(document.createTextNode(s.slice(i)));
+  return frag;
+}
+function debounce(fn,ms){let h;return function(){clearTimeout(h);h=setTimeout(fn,ms);};}
+function copy(text,msg){navigator.clipboard.writeText(text).then(()=>setStatus(msg)).catch(()=>setStatus("Copy blocked by the browser — select the text instead."));}
+function exportRows(t,rowIdx){
+  const q=v=>/[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;
+  const lines=[t.headers.map(q).join(",")];
+  rowIdx.forEach(i=>lines.push(t.rows[i].map(q).join(",")));
+  const blob=new Blob(["\uFEFF"+lines.join("\r\n")],{type:"text/csv;charset=utf-8"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download=shortName(t.name).replace(/[^\w\-]+/g,"_")+"_matches.csv";
+  a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+}
+function measure(){
+  const h=el("topbar").offsetHeight;
+  document.documentElement.style.setProperty("--topH",h+"px");
+}
+window.addEventListener("resize",measure);
+el("btnBatch").onclick=batchModal;
+el("btnHelp").onclick=helpModal;
+document.addEventListener("keydown",e=>{
+  const typing=/^(INPUT|TEXTAREA|SELECT)$/.test((e.target.tagName||""));
+  if((e.metaKey||e.ctrlKey)&&e.key==="k"){ e.preventDefault(); const q=el("q0"); if(q){q.focus();q.select();} return; }
+  if(typing) return;
+  if(e.key==="/"){ e.preventDefault(); const q=el("q0"); if(q){q.focus();q.select();} }
+  else if(e.key==="?") helpModal();
+});
+
+renderBuilder(); render(); measure();
+})();
+</script>
+</body>
+</html>
