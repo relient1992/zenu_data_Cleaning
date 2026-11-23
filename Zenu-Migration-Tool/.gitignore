@@ -1,0 +1,12 @@
+# DARIS - local secrets and learned data (never commit)
+daris/daris_settings.json
+daris/daris_memory.db
+
+# Client data used as reference
+reference/past_projects/
+
+__pycache__/
+# Client data: never commit
+client_migrations/
+reference/guides/*.xlsb
+*.pyc

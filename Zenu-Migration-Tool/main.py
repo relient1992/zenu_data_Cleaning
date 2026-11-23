@@ -1,6 +1,6 @@
-from fastapi import FastAPI, File, UploadFile, BackgroundTasks, Form
+from fastapi import FastAPI, File, UploadFile, BackgroundTasks, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from pydantic import BaseModel
 from datetime import datetime
 import shutil
@@ -23,14 +23,27 @@ from reconciliation import ReconciliationEngine
 # NEW: Job tracker router
 from job_tracker import tracker_router
 
+# NEW: DARIS AI engine (see DARIS_ARCHITECTURE.md)
+from daris import settings as daris_settings
+from daris.assistant import DarisAssistant, DarisSession
+from daris.consolidator import SmartConsolidator
+from daris.knowledge import load_fields
+from daris.llm import get_llm
+from daris.memory import MappingMemory
+from daris.references import library as reference_library
+
 app = FastAPI(title="Zenu Migration API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Let the page read download names and the X-* result counters
+    expose_headers=["Content-Disposition", "X-Files-Processed", "X-Total-Rows",
+                    "X-Files-Generated", "X-Cells-Changed", "X-Daris-Job",
+                    "X-Daris-Status", "X-Zenu-Columns", "X-Duplicate-Groups"],
 )
 
 UPLOAD_DIR = "client_migrations"
@@ -105,30 +118,59 @@ async def run_migration(
     mapping_file: UploadFile = File(...),
     csv_files: list[UploadFile] = File(...),
     source_crm: str = Form("Agentbox"),
-    chunk_size: int = Form(500000)
+    chunk_size: int = Form(500000),
+    top_up: str = Form("false"),
+    baseline_files: list[UploadFile] = File(default=[])
 ):
     try:
         job_id = f"job_{uuid.uuid4().hex[:8]}"
         workspace = os.path.join(UPLOAD_DIR, job_id)
         os.makedirs(workspace, exist_ok=True)
-        
+
         json_path = os.path.join(workspace, "mapping_rules.json")
         with open(json_path, "wb") as buffer:
             shutil.copyfileobj(mapping_file.file, buffer)
-            
+
         for csv in csv_files:
             safe_filename = os.path.basename(csv.filename.replace('\\', '/'))
             csv_path = os.path.join(workspace, safe_filename)
             with open(csv_path, "wb") as buffer:
                 shutil.copyfileobj(csv.file, buffer)
-                
+
+        # Top-up: the PREVIOUS export goes in its own sub-folder so the engine
+        # can diff against it without those files being treated as source data.
+        is_top_up = str(top_up).strip().lower() in ("true", "1", "yes", "on")
+        baseline_count = 0
+        if is_top_up and baseline_files:
+            baseline_dir = os.path.join(workspace, "_baseline")
+            os.makedirs(baseline_dir, exist_ok=True)
+            for csv in baseline_files:
+                if not csv.filename:
+                    continue
+                safe_filename = os.path.basename(csv.filename.replace('\\', '/'))
+                if not safe_filename.lower().endswith('.csv'):
+                    continue
+                with open(os.path.join(baseline_dir, safe_filename), "wb") as buffer:
+                    shutil.copyfileobj(csv.file, buffer)
+                baseline_count += 1
+
+        if is_top_up and baseline_count == 0:
+            return JSONResponse(status_code=400, content={
+                "status": "error",
+                "message": "Top-up run requires the previous export's CSV folder. "
+                           "Without it every record would be treated as new."})
+
         # Pass chunk_size to the background task
-        background_tasks.add_task(process_job, job_id, workspace, json_path, source_crm, chunk_size)
-        
+        background_tasks.add_task(process_job, job_id, workspace, json_path,
+                                  source_crm, chunk_size, is_top_up)
+
         return JSONResponse(content={
-            "status": "success", 
+            "status": "success",
             "job_id": job_id,
-            "message": "Files received successfully. Engine starting."
+            "top_up": is_top_up,
+            "baseline_files": baseline_count,
+            "message": (f"Top-up started - comparing against {baseline_count} previous file(s)."
+                        if is_top_up else "Files received successfully. Engine starting.")
         })
         
     except Exception as e:
@@ -161,11 +203,14 @@ async def get_job_progress(job_id: str):
         return JSONResponse(content=idle)
 
 
-def process_job(job_id: str, workspace: str, json_path: str, source_crm: str, chunk_size: int):
+def process_job(job_id: str, workspace: str, json_path: str, source_crm: str,
+                chunk_size: int, top_up: bool = False):
     # Pass chunk_size to the Engine
-    engine = MigrationEngine(job_id=job_id, workspace=workspace, source_crm=source_crm, chunk_size=chunk_size)
+    engine = MigrationEngine(job_id=job_id, workspace=workspace, source_crm=source_crm,
+                             chunk_size=chunk_size, top_up=top_up)
     try:
-        engine.log(f"[{job_id}] Starting migration process for {source_crm}...")
+        mode = "TOP-UP" if top_up else "full"
+        engine.log(f"[{job_id}] Starting {mode} migration process for {source_crm}...")
         engine.load_csvs_to_sqlite()
         engine.run_mapping(json_path)
     except Exception as e:
@@ -348,6 +393,273 @@ async def consolidate_excel(
 
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
+
+
+# ==========================================
+# NEW: DARIS SMART CONSOLIDATION
+# Header matching to Zenu fields + duplicate flagging + reconciliation.
+# Plain 'def' so FastAPI runs it in a worker thread - it can take a while
+# when the local LLM is answering, and must not freeze the other endpoints.
+# ==========================================
+DARIS_DIR = os.path.join(UPLOAD_DIR, "_daris")
+os.makedirs(DARIS_DIR, exist_ok=True)
+
+
+class DarisLearnItem(BaseModel):
+    header: str
+    target: str = ""   # "" = always keep this header as-is
+
+
+@app.get("/api/daris/status")
+def daris_status():
+    refs = reference_library().summary()
+    refs.pop("root", None)
+    return {"status": "success", "llm": get_llm().status(),
+            "memory": MappingMemory().stats(), "zenu_fields": len(load_fields()),
+            "references": refs,
+            "privacy": {"send_samples_to_cloud": daris_settings.load()["send_samples_to_cloud"]}}
+
+
+# ---- Settings: which AI DARIS uses ---------------------------------------
+# Only DARIS's own pages may change settings (file:// pages send Origin "null").
+# Without this, any website open in the browser could switch DARIS to a cloud
+# model with "send real values" on, since the API allows every origin.
+def _settings_origin_ok(request: Request) -> bool:
+    origin = request.headers.get("origin")
+    return origin in (None, "null") or bool(
+        re.match(r"^https?://(127\.0\.0\.1|localhost)(:\d+)?$", origin))
+
+
+class DarisSettingsUpdate(BaseModel):
+    provider: str | None = None
+    local_model: str | None = None
+    claude_model: str | None = None
+    claude_api_key: str | None = None
+    openai_model: str | None = None
+    openai_api_key: str | None = None
+    send_samples_to_cloud: bool | None = None
+    auto_apply_ai_mappings: bool | None = None
+
+
+def _sdk_status():
+    import importlib.util
+    return {"claude": importlib.util.find_spec("anthropic") is not None,
+            "openai": importlib.util.find_spec("openai") is not None}
+
+
+@app.get("/api/daris/settings")
+def daris_get_settings(request: Request):
+    if not _settings_origin_ok(request):
+        return JSONResponse(status_code=403, content={"status": "error", "message": "Not allowed."})
+    from daris.llm import LocalLLM
+    local = LocalLLM(model=daris_settings.load()["local_model"]).status()
+    return {"status": "success", "settings": daris_settings.public(), "sdk": _sdk_status(),
+            "local_models": local["installed_models"], "ollama_online": local["online"]}
+
+
+@app.post("/api/daris/settings")
+def daris_save_settings(item: DarisSettingsUpdate, request: Request):
+    if not _settings_origin_ok(request):
+        return JSONResponse(status_code=403, content={"status": "error", "message": "Not allowed."})
+    saved = daris_settings.save(item.model_dump(exclude_none=True))
+    return {"status": "success", "settings": daris_settings.public(saved)}
+
+
+@app.post("/api/daris/settings/test")
+def daris_test_settings(request: Request):
+    """One tiny real request to the active provider (cloud: costs a fraction of a cent)."""
+    if not _settings_origin_ok(request):
+        return JSONResponse(status_code=403, content={"status": "error", "message": "Not allowed."})
+    llm = get_llm()
+    if not llm.available:
+        return {"status": "error", "message": llm.last_error or f"{llm.label} is not available."}
+    started = datetime.now()
+    reply = llm.generate("Reply with exactly: OK", max_tokens=20)
+    seconds = round((datetime.now() - started).total_seconds(), 1)
+    if not reply:
+        return {"status": "error", "message": llm.last_error or f"{llm.label} gave no answer."}
+    return {"status": "success", "message": f"{llm.label} ({llm.model}) answered in {seconds}s.",
+            "reply": str(reply)[:80]}
+
+
+@app.post("/api/daris/consolidate")
+def daris_consolidate(
+    files: list[UploadFile] = File(...),
+    header_mode: str = Form("zenu"),
+    output_name: str = Form("consolidated"),
+    use_llm: str = Form("true"),
+    clean_contacts: str = Form("false"),
+):
+    job_id = f"daris_{uuid.uuid4().hex[:8]}"
+    workspace = os.path.join(DARIS_DIR, job_id)
+    os.makedirs(workspace, exist_ok=True)
+
+    safe_out = re.sub(r"[^A-Za-z0-9._ -]", "_", output_name).strip() or "consolidated"
+    if not safe_out.lower().endswith(".xlsx"):
+        safe_out += ".xlsx"
+    out_path = os.path.join(workspace, safe_out)
+
+    try:
+        saved = []
+        for f in files:
+            fname = os.path.basename(f.filename.replace("\\", "/"))
+            if not fname.lower().endswith((".xlsx", ".xls", ".csv")):
+                continue
+            dest = os.path.join(workspace, fname)
+            with open(dest, "wb") as buffer:
+                shutil.copyfileobj(f.file, buffer)
+            saved.append(dest)
+
+        if not saved:
+            return JSONResponse(status_code=400, content={
+                "status": "error",
+                "message": "No valid files (.xlsx/.xls/.csv) were found in the upload."})
+
+        engine = SmartConsolidator(
+            header_mode=header_mode,
+            use_llm=str(use_llm).strip().lower() in ("true", "1", "yes", "on"))
+        result = engine.run(saved, out_path, os.path.join(workspace, "daris_summary.json"),
+                            clean_contacts=str(clean_contacts).strip().lower() in ("true", "1", "yes", "on"))
+
+        return FileResponse(
+            out_path, media_type=XLSX_MEDIA_TYPE, filename=safe_out,
+            headers={
+                "X-Daris-Job": job_id,
+                "X-Daris-Status": result["overall"],
+                "X-Files-Processed": str(result["files"]),
+                "X-Total-Rows": str(result["rows_out"]),
+                "X-Zenu-Columns": str(result["zenu_columns"]),
+                "X-Duplicate-Groups": str(result["duplicate_groups"]),
+            },
+        )
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
+
+
+@app.get("/api/daris/summary/{job_id}")
+def daris_summary(job_id: str):
+    path = os.path.join(DARIS_DIR, os.path.basename(job_id), "daris_summary.json")
+    if not os.path.exists(path):
+        return JSONResponse(status_code=404, content={"status": "not_found", "job_id": job_id})
+    with open(path, "r", encoding="utf-8") as f:
+        return JSONResponse(content=json.load(f))
+
+
+@app.post("/api/daris/learn")
+def daris_learn(item: DarisLearnItem):
+    target = item.target.strip()
+    if target and target not in {f["name"] for f in load_fields()}:
+        return JSONResponse(status_code=400, content={
+            "status": "error", "message": f"'{target}' is not a Zenu field."})
+    if not MappingMemory().remember(item.header, target, source="user"):
+        return JSONResponse(status_code=400, content={
+            "status": "error",
+            "message": f"'{item.header}' is a placeholder for a file without a header row, "
+                       "so it can't be learned for future files."})
+    return {"status": "success",
+            "message": f"DARIS will map '{item.header}' -> {target or '(keep as-is)'} from now on."}
+
+
+# ==========================================
+# NEW: DARIS CHAT (daris.html)
+# A session = uploaded files + outputs + chat state on disk.
+# /api/daris/chat streams NDJSON events: status / token / text / card / error / done
+# ==========================================
+DARIS_SESSIONS_DIR = os.path.join(DARIS_DIR, "sessions")
+os.makedirs(DARIS_SESSIONS_DIR, exist_ok=True)
+
+
+class DarisChatItem(BaseModel):
+    session_id: str
+    message: str
+
+
+def _daris_session_or_404(session_id: str):
+    session = DarisSession.load(DARIS_SESSIONS_DIR, session_id)
+    if session is None:
+        return None, JSONResponse(status_code=404, content={
+            "status": "error", "message": "Session not found - start a new chat."})
+    return session, None
+
+
+@app.post("/api/daris/session")
+def daris_new_session():
+    return DarisSession.create(DARIS_SESSIONS_DIR).public_state()
+
+
+@app.get("/api/daris/session/{session_id}")
+def daris_get_session(session_id: str):
+    session, err = _daris_session_or_404(session_id)
+    return err or session.public_state()
+
+
+@app.post("/api/daris/session/{session_id}/upload")
+def daris_upload(session_id: str, files: list[UploadFile] = File(...)):
+    session, err = _daris_session_or_404(session_id)
+    if err:
+        return err
+    added = session.add_files([(f.filename, f.file) for f in files])
+    return {"status": "success", "added": [{k: v for k, v in p.items() if k != "mapping"} for p in added],
+            **session.public_state()}
+
+
+@app.delete("/api/daris/session/{session_id}/file/{file_name}")
+def daris_remove_file(session_id: str, file_name: str):
+    session, err = _daris_session_or_404(session_id)
+    if err:
+        return err
+    session.remove_file(file_name)
+    return {"status": "success", **session.public_state()}
+
+
+@app.get("/api/daris/session/{session_id}/download/{file_name}")
+def daris_download(session_id: str, file_name: str):
+    session, err = _daris_session_or_404(session_id)
+    if err:
+        return err
+    path = session.output_path(file_name)
+    if not path:
+        return JSONResponse(status_code=404, content={"status": "error", "message": "File not found."})
+    return FileResponse(path, media_type=XLSX_MEDIA_TYPE, filename=os.path.basename(path))
+
+
+@app.post("/api/daris/chat")
+def daris_chat(item: DarisChatItem):
+    session, err = _daris_session_or_404(item.session_id)
+    if err:
+        return err
+
+    def events():
+        for ev in DarisAssistant(session).handle(item.message):
+            yield json.dumps(ev, default=str) + "\n"
+
+    return StreamingResponse(events(), media_type="application/x-ndjson")
+
+
+class DarisGeneralItem(BaseModel):
+    file: str
+    sheet: str
+    mapping: dict
+    id_tag: str = ""
+    remember: bool = False
+    profile: str = "general"          # general | agentbox
+    flag_modes: dict = {}             # permission role -> {meaning, blank}
+    date_modes: dict = {}             # date role -> date | datetime | datetime_s
+
+
+@app.post("/api/daris/session/{session_id}/general-clean")
+def daris_general_clean(session_id: str, item: DarisGeneralItem):
+    """The mapping-review card's Run button: General cleaning with the CONFIRMED mapping."""
+    session, err = _daris_session_or_404(session_id)
+    if err:
+        return err
+
+    def events():
+        for ev in DarisAssistant(session).run_general(item.file, item.sheet, item.mapping, item.id_tag, item.remember,
+                                                      item.profile, item.flag_modes, item.date_modes):
+            yield json.dumps(ev, default=str) + "\n"
+
+    return StreamingResponse(events(), media_type="application/x-ndjson")
 
 
 # ==========================================

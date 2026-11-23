@@ -245,6 +245,11 @@
                 </div>
             </div>
 
+            <a href="daris.html" title="Open the DARIS AI assistant" class="bg-app-bg hover:bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 px-4 py-2 rounded text-sm font-medium transition-colors flex items-center gap-2 shadow-[0_0_10px_rgba(34,211,238,0.12)]">
+                <span class="w-3.5 h-3.5 rounded-full shadow-[0_0_8px_rgba(34,211,238,0.7)]" style="background: radial-gradient(circle at 35% 30%, #cffafe, #22d3ee 30%, #6366f1 70%);"></span>
+                DARIS AI
+            </a>
+
             <button type="button" onclick="openRunModal()" class="ml-2 bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2 rounded text-sm font-bold transition-all shadow-[0_0_15px_rgba(99,102,241,0.4)] hover:shadow-[0_0_25px_rgba(99,102,241,0.6)] relative overflow-hidden group tracking-wide uppercase">
                 <span class="relative z-10 flex items-center gap-2">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
@@ -434,6 +439,32 @@
                 <p class="text-[10px] text-slate-500 mt-1 italic">Set to 0 to disable splitting. Excel limit is 1,048,576 rows.</p>
             </div>
 
+            <div class="mb-5 bg-app-bg p-4 rounded border border-app-border">
+                <label class="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" id="topUpToggle" onchange="toggleTopUp()" class="w-4 h-4 text-amber-500 bg-slate-900 border-slate-600 rounded focus:ring-amber-500">
+                    <span class="text-sm font-bold text-amber-400 uppercase tracking-wider">Top-Up Migration</span>
+                </label>
+                <p class="text-[10px] text-slate-500 mt-2 italic">
+                    Emits only records that are new since the client's previous export.
+                    Output files are suffixed <span class="font-mono text-amber-400">_TopUp</span>.
+                </p>
+
+                <div id="topUpPanel" class="hidden mt-3">
+                    <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
+                        <div class="w-1.5 h-1.5 rounded-full bg-amber-400"></div>
+                        Previous Export Folder (the data already migrated)
+                    </label>
+                    <label class="block bg-app-card hover:bg-slate-800 text-amber-400 border border-amber-500/30 px-4 py-3 rounded text-sm font-medium cursor-pointer transition-colors text-center">
+                        <span id="baselineLabel">Click to select the OLD export folder</span>
+                        <input type="file" id="baselineInput" webkitdirectory directory multiple class="hidden" accept=".csv" onchange="updateBaselineLabel()" />
+                    </label>
+                    <p class="text-[10px] text-slate-500 mt-2 italic">
+                        Attach your current export above as normal. <strong class="text-slate-400">contact_cleaned.csv
+                        must still contain both existing and new contacts</strong> &mdash; it is the lookup, not the delta.
+                    </p>
+                </div>
+            </div>
+
             <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Select Matrices to Execute</label>
             <div class="overflow-y-auto max-h-48 mb-5 bg-app-bg border border-app-border rounded p-2" id="runGroupList">
                 </div>
@@ -474,11 +505,11 @@
             <div class="mb-4">
                 <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
                     <div class="w-1.5 h-1.5 rounded-full bg-cyan-400"></div>
-                    Select Excel Files (.xlsx / .xls)
+                    Select Files (.xlsx / .xls — .csv in DARIS mode)
                 </label>
                 <label class="block bg-app-bg hover:bg-slate-800 text-cyan-400 border border-cyan-500/30 px-4 py-3 rounded text-sm font-medium cursor-pointer transition-colors text-center">
                     Click to attach files
-                    <input type="file" id="consolidateInput" accept=".xlsx,.xls" multiple class="hidden" onchange="updateConsolidateFileList()" />
+                    <input type="file" id="consolidateInput" accept=".xlsx,.xls,.csv" multiple class="hidden" onchange="updateConsolidateFileList()" />
                 </label>
                 <div id="consolidateFileList" class="mt-3 max-h-40 overflow-y-auto space-y-1 text-xs font-mono text-slate-400"></div>
             </div>
@@ -488,11 +519,29 @@
                     <div class="w-1.5 h-1.5 rounded-full bg-purple-400"></div>
                     Consolidation Mode
                 </label>
-                <select id="consolidateMode" class="w-full bg-app-card border border-app-border rounded p-2.5 text-sm outline-none focus:border-indigo-500 text-slate-200 font-medium">
+                <select id="consolidateMode" onchange="onConsolidateModeChange()" class="w-full bg-app-card border border-app-border rounded p-2.5 text-sm outline-none focus:border-indigo-500 text-slate-200 font-medium">
                     <option value="append" selected>Stack rows into one sheet (append)</option>
                     <option value="sheets">One tab per file (separate sheets)</option>
+                    <option value="daris">DARIS smart merge + reconciliation (AI)</option>
                 </select>
-                <p class="text-[10px] text-slate-500 mt-2 italic">Append adds "__source_file__" / "__source_sheet__" columns so you can trace each row's origin.</p>
+                <p id="consolidateModeHint" class="text-[10px] text-slate-500 mt-2 italic">Append adds "__source_file__" / "__source_sheet__" columns so you can trace each row's origin.</p>
+
+                <div id="darisOptions" class="hidden mt-4">
+                    <label for="darisHeaderMode" class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
+                        <div class="w-1.5 h-1.5 rounded-full bg-amber-400"></div>
+                        Output Headers
+                    </label>
+                    <select id="darisHeaderMode" class="w-full bg-app-card border border-app-border rounded p-2.5 text-sm outline-none focus:border-amber-500 text-slate-200 font-medium">
+                        <option value="zenu" selected>Rename to Zenu field names</option>
+                        <option value="original">Keep original names (still aligned)</option>
+                    </select>
+                    <label class="mt-3 flex items-start gap-2.5 cursor-pointer">
+                        <input type="checkbox" id="darisCleanContacts" class="mt-0.5 w-4 h-4 bg-slate-900 border-slate-600 accent-cyan-500">
+                        <span class="text-sm text-slate-200">Also clean contacts
+                            <span class="block text-[10px] text-slate-500">Name splitting + phone/email rules from your macros. Adds Cleaned Contacts and Cleaning Audit tabs.</span></span>
+                    </label>
+                    <div id="darisStatus" class="mt-2 text-[10px] font-mono text-slate-500">Checking local AI...</div>
+                </div>
 
                 <label for="consolidateOutputName" class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 mt-4 flex items-center gap-2">
                     <div class="w-1.5 h-1.5 rounded-full bg-emerald-400"></div>
@@ -1518,6 +1567,7 @@
             const input = document.getElementById('consolidateInput');
             input.value = '';
             updateConsolidateFileList();
+            onConsolidateModeChange();
             const modal = document.getElementById('consolidateModal');
             modal.classList.remove('hidden');
             modal.classList.add('flex');
@@ -1544,6 +1594,41 @@
             `).join('');
         }
 
+        const CONSOLIDATE_HINTS = {
+            append: 'Append adds "__source_file__" / "__source_sheet__" columns so you can trace each row\'s origin.',
+            sheets: 'Each file\'s first sheet becomes its own tab.',
+            daris: 'Matches differently-named columns to Zenu fields, flags duplicates & ID clashes (nothing deleted), and reconciles rows + cells in vs out. Report tabs are added to the workbook.'
+        };
+
+        async function onConsolidateModeChange() {
+            const mode = document.getElementById('consolidateMode').value;
+            document.getElementById('consolidateModeHint').textContent = CONSOLIDATE_HINTS[mode] || '';
+            const opts = document.getElementById('darisOptions');
+            opts.classList.toggle('hidden', mode !== 'daris');
+            if (mode !== 'daris') return;
+
+            const status = document.getElementById('darisStatus');
+            status.textContent = 'Checking AI...';
+            try {
+                const res = await fetch("http://127.0.0.1:8000/api/daris/status");
+                const d = await res.json();
+                const learned = Object.values(d.memory || {}).reduce((a, b) => a + b, 0);
+                if (d.llm.cloud) {
+                    status.innerHTML = d.llm.online
+                        ? `<span class="text-amber-400">● ${d.llm.label} (cloud)</span> — ${d.llm.model} · change in DARIS Settings`
+                        : `<span class="text-rose-400">● ${d.llm.label} not set up</span> — ${d.llm.error || 'add an API key in DARIS Settings'}`;
+                } else if (d.llm.online && d.llm.model_installed) {
+                    status.innerHTML = `<span class="text-emerald-400">● Local LLM online</span> — ${d.llm.model} · ${learned} learned mapping(s)`;
+                } else if (d.llm.online) {
+                    status.innerHTML = `<span class="text-amber-400">● Ollama running, model missing</span> — run: ollama pull ${d.llm.model}`;
+                } else {
+                    status.innerHTML = `<span class="text-slate-400">● LLM offline</span> — rules + fuzzy matching only · ${learned} learned mapping(s)`;
+                }
+            } catch (_) {
+                status.innerHTML = '<span class="text-rose-400">● Engine unreachable</span> — is the API running?';
+            }
+        }
+
         async function executeConsolidation(event) {
             const btn = document.getElementById('executeConsolidateBtn');
             const files = document.getElementById('consolidateInput').files;
@@ -1556,20 +1641,30 @@
             }
 
             const mode = document.getElementById('consolidateMode').value;
+            const isDaris = mode === 'daris';
             const outputName = (document.getElementById('consolidateOutputName').value || 'consolidated').trim();
+
+            if (!isDaris && Array.from(files).some(f => f.name.toLowerCase().endsWith('.csv'))) {
+                showNotification("Heads Up", "CSV files are skipped in this mode — choose DARIS smart merge to include them.", "warning");
+            }
 
             const formData = new FormData();
             Array.from(files).forEach(f => formData.append('files', f));
             formData.append('mode', mode);
             formData.append('output_name', outputName);
+            if (isDaris) {
+                formData.append('header_mode', document.getElementById('darisHeaderMode').value);
+                formData.append('clean_contacts', document.getElementById('darisCleanContacts').checked);
+            }
 
             const originalHtml = btn.innerHTML;
             btn.disabled = true;
             btn.classList.add('opacity-60', 'cursor-not-allowed');
-            btn.innerHTML = 'Consolidating...';
+            btn.innerHTML = isDaris ? 'DARIS is analysing...' : 'Consolidating...';
 
             try {
-                const res = await fetch("http://127.0.0.1:8000/api/consolidate-excel", {
+                const endpoint = isDaris ? "/api/daris/consolidate" : "/api/consolidate-excel";
+                const res = await fetch("http://127.0.0.1:8000" + endpoint, {
                     method: "POST",
                     body: formData
                 });
@@ -1607,7 +1702,17 @@
                 const detail = (filesProcessed && totalRows)
                     ? `Merged ${filesProcessed} file(s), ${Number(totalRows).toLocaleString()} rows into ${downloadName}.`
                     : `Downloaded ${downloadName}.`;
-                showNotification("Consolidation Complete", detail, "success");
+                const darisStatus = res.headers.get('X-Daris-Status');
+                if (isDaris && darisStatus) {
+                    const zenuCols = res.headers.get('X-Zenu-Columns');
+                    const dupGroups = Number(res.headers.get('X-Duplicate-Groups') || 0);
+                    const toastType = darisStatus === 'PASS' ? 'success' : darisStatus === 'WARN' ? 'warning' : 'error';
+                    showNotification(`DARIS: ${darisStatus}`,
+                        `${detail} ${zenuCols} column(s) matched to Zenu, ${dupGroups.toLocaleString()} possible duplicate group(s). ` +
+                        `Open the "DARIS Summary" and "Issues" tabs.`, toastType);
+                } else {
+                    showNotification("Consolidation Complete", detail, "success");
+                }
                 closeConsolidateModal();
             } catch (err) {
                 showNotification("Consolidation Failed", err.message || "Unable to reach the engine. Is the API running?", "error");
@@ -1763,6 +1868,24 @@
             showNotification("System Export", "Configuration serialized and downloaded successfully.", "success");
         }
 
+        // --- Top-Up Migration (delta against the client's previous export) ---
+        function toggleTopUp() {
+            const on = document.getElementById('topUpToggle').checked;
+            document.getElementById('topUpPanel').classList.toggle('hidden', !on);
+            if (!on) {
+                document.getElementById('baselineInput').value = '';
+                updateBaselineLabel();
+            }
+        }
+
+        function updateBaselineLabel() {
+            const files = document.getElementById('baselineInput').files;
+            const csvCount = Array.from(files || []).filter(f => f.name.toLowerCase().endsWith('.csv')).length;
+            document.getElementById('baselineLabel').textContent = csvCount
+                ? `${csvCount} previous export file(s) selected`
+                : 'Click to select the OLD export folder';
+        }
+
         // --- Live ETL Execution & Terminal Logic ---
         function openRunModal() {
             const sourceFiles = document.getElementById('sourceInput').files;
@@ -1770,9 +1893,14 @@
                 return showNotification("Execution Blocked", "Source data missing. Please attach CSV payloads first.", "error");
             }
 
+            // top-up is always opt-in per run, never sticky
+            document.getElementById('topUpToggle').checked = false;
+            document.getElementById('baselineInput').value = '';
+            toggleTopUp();
+
             const runList = document.getElementById('runGroupList');
             runList.innerHTML = '';
-            
+
             const groupsWithData = Object.keys(mappings).filter(group => mappings[group].length > 0);
             
             if (groupsWithData.length === 0) {
@@ -1976,17 +2104,35 @@
             const sourceCrm = document.getElementById('sourceCrm').value;
             const chunkSize = document.getElementById('chunkSize').value;
 
+            const isTopUp = document.getElementById('topUpToggle').checked;
+            const baselineFiles = document.getElementById('baselineInput').files;
+
+            if (isTopUp && baselineFiles.length === 0) {
+                return showNotification("Top-Up Blocked",
+                    "Select the client's PREVIOUS export folder. Without it every record would be treated as new.",
+                    "error");
+            }
+
             const formData = new FormData();
             formData.append("mapping_file", mappingFile);
-            formData.append("source_crm", sourceCrm); 
+            formData.append("source_crm", sourceCrm);
             formData.append("chunk_size", chunkSize || 0);
-            
+            formData.append("top_up", isTopUp ? "true" : "false");
+
             for (let i = 0; i < sourceFiles.length; i++) {
                 formData.append("csv_files", sourceFiles[i]);
             }
 
+            if (isTopUp) {
+                for (let i = 0; i < baselineFiles.length; i++) {
+                    if (baselineFiles[i].name.toLowerCase().endsWith('.csv')) {
+                        formData.append("baseline_files", baselineFiles[i]);
+                    }
+                }
+            }
+
             closeRunModal();
-            triggerTechOverlay(sourceCrm);
+            triggerTechOverlay(isTopUp ? `${sourceCrm} TOP-UP` : sourceCrm);
 
             try {
                 const response = await fetch("http://127.0.0.1:8000/api/run-migration", {

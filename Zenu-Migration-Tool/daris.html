@@ -1,0 +1,1251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DARIS · Automated Reasoning System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                        hud: ['Rajdhani', 'Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        holo: { DEFAULT: '#5EE7FF', dim: '#2AA9C9', deep: '#0E3A4A' },
+                        arc: '#FFB547',
+                        alert: '#FF4D6D',
+                        ok: '#3DFFB0',
+                        void: '#02060C',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        :root {
+            --holo: #5EE7FF; --holo-rgb: 94,231,255;
+            --arc: #FFB547; --alert: #FF4D6D; --ok: #3DFFB0;
+            --line: rgba(94,231,255,0.14); --line-strong: rgba(94,231,255,0.35);
+            --panel: linear-gradient(180deg, rgba(9,24,38,0.72), rgba(4,12,22,0.72));
+        }
+        html, body { background: #02060C; }
+        body { color: #B9CBD8; }
+        ::selection { background: rgba(94,231,255,0.25); color: #fff; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(94,231,255,0.18); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(94,231,255,0.35); }
+
+        /* ---------- Atmosphere ---------- */
+        .atmos { position: fixed; inset: 0; pointer-events: none; z-index: 0;
+            background:
+                radial-gradient(1200px 700px at 50% 38%, rgba(30,120,160,0.16), transparent 60%),
+                radial-gradient(600px 400px at 85% 100%, rgba(255,181,71,0.05), transparent 70%),
+                #02060C; }
+        .atmos::before { content: ''; position: absolute; inset: 0;
+            background-image: linear-gradient(rgba(94,231,255,0.045) 1px, transparent 1px),
+                              linear-gradient(90deg, rgba(94,231,255,0.045) 1px, transparent 1px);
+            background-size: 48px 48px;
+            -webkit-mask-image: radial-gradient(ellipse at 50% 40%, #000 10%, transparent 75%);
+                    mask-image: radial-gradient(ellipse at 50% 40%, #000 10%, transparent 75%); }
+        .atmos::after { content: ''; position: absolute; inset: 0; opacity: 0.35;
+            background: repeating-linear-gradient(0deg, rgba(255,255,255,0.018) 0 1px, transparent 1px 3px); }
+
+        /* ---------- HUD panels with corner brackets ---------- */
+        .hud { position: relative; background: var(--panel); border: 1px solid var(--line);
+               backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+        .hud::before { content: ''; position: absolute; inset: -1px; pointer-events: none;
+            --c: var(--line-strong); --s: 10px;
+            background:
+                linear-gradient(var(--c),var(--c)) top left / var(--s) 1px no-repeat,
+                linear-gradient(var(--c),var(--c)) top left / 1px var(--s) no-repeat,
+                linear-gradient(var(--c),var(--c)) top right / var(--s) 1px no-repeat,
+                linear-gradient(var(--c),var(--c)) top right / 1px var(--s) no-repeat,
+                linear-gradient(var(--c),var(--c)) bottom left / var(--s) 1px no-repeat,
+                linear-gradient(var(--c),var(--c)) bottom left / 1px var(--s) no-repeat,
+                linear-gradient(var(--c),var(--c)) bottom right / var(--s) 1px no-repeat,
+                linear-gradient(var(--c),var(--c)) bottom right / 1px var(--s) no-repeat; }
+        .hud.hot::before { --c: var(--holo); }
+        .label { font-family: Rajdhani, sans-serif; font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; font-size: 11px; color: rgba(94,231,255,0.75); }
+        .code { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.08em; color: rgba(185,203,216,0.4); }
+        .rule { height: 1px; background: linear-gradient(90deg, var(--line-strong), transparent); }
+        .glow-text { text-shadow: 0 0 18px rgba(94,231,255,0.45); }
+
+        /* ---------- Core (animated rings) ---------- */
+        .core { position: relative; flex-shrink: 0; }
+        .core svg { width: 100%; height: 100%; overflow: visible; }
+        .core .r1 { transform-origin: 100px 100px; animation: spin 38s linear infinite; }
+        .core .r2 { transform-origin: 100px 100px; animation: spin 22s linear infinite reverse; }
+        .core .r3 { transform-origin: 100px 100px; animation: spin 60s linear infinite; }
+        .core .heart { transform-origin: 100px 100px; animation: breathe 4.5s ease-in-out infinite; }
+        .core.busy .r1 { animation-duration: 6s; } .core.busy .r2 { animation-duration: 3.5s; } .core.busy .r3 { animation-duration: 9s; }
+        .core.busy .heart { animation-duration: 1.1s; }
+        .core.listen .heart { animation: listen 0.6s ease-in-out infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes breathe { 0%,100% { transform: scale(1); opacity: 0.9; } 50% { transform: scale(1.06); opacity: 1; } }
+        @keyframes listen { 0%,100% { transform: scale(1); } 50% { transform: scale(1.14); } }
+
+        /* ---------- Messages ---------- */
+        .msg-ai { border-left: 1px solid var(--line-strong); }
+        .md p + p, .md ul + p, .md p + ul { margin-top: 0.65rem; }
+        .md ul { list-style: none; padding: 0; }
+        .md li { position: relative; padding-left: 1.15rem; margin: 0.3rem 0; }
+        .md li::before { content: ''; position: absolute; left: 0.15rem; top: 0.58rem; width: 6px; height: 1px; background: var(--holo); box-shadow: 0 0 6px var(--holo); }
+        .md code { font-family: 'JetBrains Mono', monospace; font-size: 0.8em; background: rgba(94,231,255,0.08); color: #9FF1FF; padding: 0.08rem 0.35rem; border: 1px solid rgba(94,231,255,0.15); }
+        .md strong { color: #EAF6FF; font-weight: 600; }
+        .caret::after { content: '▌'; color: var(--holo); animation: blink 1s steps(2) infinite; margin-left: 2px; }
+        @keyframes blink { 50% { opacity: 0; } }
+        .enter { animation: enter 0.4s cubic-bezier(.2,.8,.2,1) both; }
+        @keyframes enter { from { opacity: 0; transform: translateY(10px); filter: blur(2px); } to { opacity: 1; transform: none; filter: none; } }
+        .scanbar { position: relative; height: 2px; width: 140px; background: rgba(94,231,255,0.12); overflow: hidden; }
+        .scanbar::after { content: ''; position: absolute; top: 0; bottom: 0; width: 40%; background: linear-gradient(90deg, transparent, var(--holo), transparent); animation: scan 1.2s ease-in-out infinite; }
+        @keyframes scan { from { left: -40%; } to { left: 100%; } }
+
+        /* ---------- Controls ---------- */
+        .btn-hud { position: relative; font-family: Rajdhani, sans-serif; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; transition: all .18s ease; }
+        .proto { border: 1px solid transparent; transition: all .18s ease; }
+        .proto:hover:not(:disabled) { border-color: var(--line-strong); background: rgba(94,231,255,0.05); }
+        .proto:hover:not(:disabled) .idx { color: var(--holo); }
+        .proto:disabled, .btn-hud:disabled { opacity: 0.4; cursor: not-allowed; }
+        .chip { font-family: 'JetBrains Mono', monospace; font-size: 10px; padding: 2px 6px; border: 1px solid var(--line); color: #8FB4C4; background: rgba(94,231,255,0.04); }
+        .sev { font-family: Rajdhani, sans-serif; font-weight: 700; letter-spacing: 0.14em; font-size: 10px; padding: 1px 7px; border: 1px solid; }
+        .sev-FAIL { color: var(--alert); border-color: rgba(255,77,109,0.5); background: rgba(255,77,109,0.08); }
+        .sev-WARN { color: var(--arc); border-color: rgba(255,181,71,0.5); background: rgba(255,181,71,0.08); }
+        .sev-INFO { color: var(--holo); border-color: rgba(94,231,255,0.35); background: rgba(94,231,255,0.05); }
+        .sev-PASS { color: var(--ok); border-color: rgba(61,255,176,0.5); background: rgba(61,255,176,0.08); }
+        .composer { background: linear-gradient(180deg, rgba(8,22,34,0.9), rgba(4,12,20,0.95)); border: 1px solid var(--line); transition: border-color .2s, box-shadow .2s; }
+        .composer:focus-within { border-color: rgba(94,231,255,0.45); box-shadow: 0 0 0 1px rgba(94,231,255,0.12), 0 0 40px rgba(94,231,255,0.08); }
+        .wave { display: inline-flex; gap: 2px; align-items: center; height: 14px; }
+        .wave i { width: 2px; background: var(--alert); animation: wave 0.9s ease-in-out infinite; }
+        .wave i:nth-child(2) { animation-delay: .15s } .wave i:nth-child(3) { animation-delay: .3s } .wave i:nth-child(4) { animation-delay: .45s }
+        @keyframes wave { 0%,100% { height: 3px; } 50% { height: 14px; } }
+
+        /* ---------- Gauges ---------- */
+        .g-track { fill: none; stroke: rgba(94,231,255,0.1); stroke-width: 5; }
+        .g-val { fill: none; stroke-width: 5; stroke-linecap: butt; transition: stroke-dashoffset 1.2s cubic-bezier(.2,.8,.2,1); filter: drop-shadow(0 0 4px currentColor); }
+        .g-tick { fill: none; stroke: rgba(94,231,255,0.25); stroke-width: 3; stroke-dasharray: 1 5.2; }
+
+        /* ---------- Boot ---------- */
+        #boot { transition: opacity .6s ease, visibility .6s ease; }
+        #boot.done { opacity: 0; visibility: hidden; pointer-events: none; }
+        .boot-line { opacity: 0; animation: bootIn .35s ease forwards; }
+        @keyframes bootIn { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
+
+        #dropOverlay { transition: opacity .15s ease; }
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+        }
+    </style>
+</head>
+<body class="h-screen overflow-hidden font-sans antialiased">
+    <div class="atmos"></div>
+
+    <!-- ===================== BOOT SEQUENCE ===================== -->
+    <div id="boot" class="fixed inset-0 z-[100] bg-void flex items-center justify-center cursor-pointer" title="Click to skip">
+        <div class="w-full max-w-md px-8">
+            <div class="flex items-center gap-4 mb-8">
+                <div class="core busy w-14 h-14" data-core></div>
+                <div>
+                    <div class="font-hud text-3xl font-bold tracking-[0.35em] text-white glow-text">DARIS</div>
+                    <div class="code mt-1">DARYL'S AUTOMATED REASONING &amp; VIRTUAL INTELLIGENCE SYSTEM</div>
+                </div>
+            </div>
+            <div id="bootLog" class="font-mono text-[12px] leading-6 text-holo/80 min-h-[9rem]"></div>
+            <div class="mt-6 scanbar !w-full"></div>
+        </div>
+    </div>
+
+    <div class="relative z-10 h-screen flex flex-col">
+        <!-- ===================== TOP BAR ===================== -->
+        <header class="h-14 shrink-0 flex items-center gap-4 px-4 lg:px-6 border-b" style="border-color: var(--line); background: rgba(2,8,14,0.6); backdrop-filter: blur(8px);">
+            <button id="menuBtn" class="lg:hidden p-1.5 -ml-1 text-holo/80 hover:text-holo" aria-label="Toggle data bay">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-width="1.5" d="M4 7h16M4 12h10M4 17h16"/></svg>
+            </button>
+            <div class="flex items-center gap-3">
+                <div id="brandCore" class="core w-8 h-8" data-core></div>
+                <div class="leading-none">
+                    <div class="font-hud text-lg font-bold tracking-[0.32em] text-white" title="Daryl's Automated Reasoning &amp; Virtual Intelligence System">DARIS</div>
+                    <div class="code mt-0.5 hidden sm:block">AUTOMATED REASONING · VIRTUAL INTELLIGENCE</div>
+                </div>
+            </div>
+            <div class="hidden md:block h-6 w-px" style="background: var(--line);"></div>
+            <div class="hidden md:flex items-center gap-5 text-[11px] font-mono">
+                <div><span class="text-slate-500">CORE </span><span id="hdrCore" class="text-slate-400">LINKING</span></div>
+                <div><span class="text-slate-500">MODEL </span><span id="hdrModel" class="text-slate-300">—</span></div>
+                <div><span class="text-slate-500">MEMORY </span><span id="hdrMemory" class="text-slate-300">—</span></div>
+                <div class="hidden xl:block"><span class="text-slate-500">SESSION </span><span id="sessionTag" class="text-slate-400">—</span></div>
+            </div>
+            <div class="ml-auto flex items-center gap-4">
+                <div id="privacyBadge" class="hidden sm:flex items-center gap-2 font-hud text-[11px] font-semibold tracking-[0.2em] text-ok/90">
+                    <span class="w-1.5 h-1.5 bg-ok shadow-[0_0_8px_#3DFFB0]"></span>OFFLINE · SECURE
+                </div>
+                <div id="clock" class="hidden sm:block font-mono text-[12px] text-slate-400 tabular-nums">--:--:--</div>
+                <button id="settingsBtn" class="p-1.5 text-slate-400 hover:text-holo transition-colors" title="AI engine settings" aria-label="Settings">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                </button>
+                <a href="index.html" class="btn-hud whitespace-nowrap text-[11px] px-3 py-1.5 text-slate-300 hover:text-white border hover:bg-white/[0.03]" style="border-color: var(--line);" title="Back to the classic migration UI">Classic UI</a>
+            </div>
+        </header>
+
+        <div class="flex-1 flex min-h-0">
+            <!-- ===================== DATA BAY ===================== -->
+            <aside id="sidebar" class="w-[19rem] shrink-0 flex flex-col gap-4 p-4 overflow-y-auto max-lg:hidden max-lg:fixed max-lg:top-14 max-lg:bottom-0 max-lg:left-0 max-lg:z-40 max-lg:bg-void/95">
+                <section class="hud p-4">
+                    <div class="flex items-center justify-between mb-3">
+                        <span class="label">Data Bay</span><span class="code">BAY.01 · <span id="fileCount">0</span> FILES</span>
+                    </div>
+                    <label id="sideDrop" class="group block relative border border-dashed px-3 py-5 text-center cursor-pointer transition-colors hover:bg-holo/[0.04]" style="border-color: var(--line-strong);">
+                        <svg class="w-6 h-6 mx-auto text-holo/80 group-hover:text-holo mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.3" d="M12 16V4m0 0l-4 4m4-4l4 4M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+                        <div class="font-hud text-[13px] font-semibold tracking-[0.18em] text-slate-200">INGEST FILES</div>
+                        <div class="code mt-1">DROP OR BROWSE · XLSX · XLS · CSV</div>
+                        <input id="fileInput" type="file" accept=".xlsx,.xls,.csv" multiple class="hidden">
+                    </label>
+                    <div id="fileList" class="mt-3 space-y-1.5"></div>
+                </section>
+
+                <section class="hud p-4">
+                    <div class="flex items-center justify-between mb-2"><span class="label">Protocols</span><span class="code">CMD</span></div>
+                    <div class="space-y-1">
+                        <button data-prompt="clean agentbox contacts" class="quick proto w-full flex items-center gap-3 px-2.5 py-2 text-left">
+                            <span class="idx font-mono text-[10px] text-arc">01</span>
+                            <span class="flex-1"><span class="block font-hud text-[14px] font-semibold tracking-wide text-white">Agentbox contacts</span><span class="block text-[11px] text-slate-500">contact · category · agents · base64 notes</span></span>
+                        </button>
+                        <button data-prompt="general cleaning" class="quick proto w-full flex items-center gap-3 px-2.5 py-2 text-left">
+                            <span class="idx font-mono text-[10px] text-arc">02</span>
+                            <span class="flex-1"><span class="block font-hud text-[14px] font-semibold tracking-wide text-white">General cleaning</span><span class="block text-[11px] text-slate-500">Any CRM · you confirm the columns</span></span>
+                        </button>
+                        <button data-prompt="show mapping" class="quick proto w-full flex items-center gap-3 px-2.5 py-2 text-left">
+                            <span class="idx font-mono text-[10px] text-slate-500">03</span><span class="font-hud text-[14px] font-semibold tracking-wide text-slate-200">Column mapping</span>
+                        </button>
+                        <button data-prompt="show cleaning results" class="quick proto w-full flex items-center gap-3 px-2.5 py-2 text-left">
+                            <span class="idx font-mono text-[10px] text-slate-500">04</span><span class="font-hud text-[14px] font-semibold tracking-wide text-slate-200">Cleaning results</span>
+                        </button>
+                        <button data-prompt="show issues" class="quick proto w-full flex items-center gap-3 px-2.5 py-2 text-left">
+                            <span class="idx font-mono text-[10px] text-slate-500">05</span><span class="font-hud text-[14px] font-semibold tracking-wide text-slate-200">Issue report</span>
+                        </button>
+                        <button data-prompt="show references" class="quick proto w-full flex items-center gap-3 px-2.5 py-2 text-left">
+                            <span class="idx font-mono text-[10px] text-slate-500">06</span><span class="font-hud text-[14px] font-semibold tracking-wide text-slate-200">Reference library</span>
+                        </button>
+                        <button data-prompt="help" class="quick proto w-full flex items-center gap-3 px-2.5 py-2 text-left">
+                            <span class="idx font-mono text-[10px] text-slate-500">07</span><span class="font-hud text-[14px] font-semibold tracking-wide text-slate-200">Capabilities</span>
+                        </button>
+                    </div>
+                </section>
+
+                <button id="newChatBtn" class="btn-hud mt-auto text-[12px] py-2.5 border text-slate-300 hover:text-white hover:bg-white/[0.03]" style="border-color: var(--line);">+ New session</button>
+            </aside>
+
+            <!-- ===================== CONVERSATION ===================== -->
+            <main class="flex-1 flex flex-col min-w-0 relative">
+                <div id="scroller" class="flex-1 overflow-y-auto overflow-x-hidden">
+                    <section id="welcome" class="min-h-full flex flex-col items-center justify-center px-6 py-10 text-center">
+                        <div class="core w-52 h-52 sm:w-64 sm:h-64" data-core data-size="hero"></div>
+                        <div class="code mt-8">LOCAL CORE ONLINE · NO DATA LEAVES THIS DEVICE</div>
+                        <h1 id="greeting" class="font-hud text-4xl sm:text-5xl font-bold tracking-[0.06em] text-white mt-3 glow-text">Good day.</h1>
+                        <p class="mt-3 text-slate-400 max-w-xl">Ingest a client's contact export — Agentbox's CSVs or any other CRM. I'll propose the column mapping for you to check, then clean it with your rules: split people at the bottom of the Summary, phones routed, addresses split.</p>
+                        <div class="mt-9 grid sm:grid-cols-2 gap-3 w-full max-w-2xl text-left">
+                            <button data-prompt="clean agentbox contacts" class="quick hud group p-4 hover:bg-holo/[0.04] transition-colors">
+                                <div class="code text-arc/80">PROTOCOL 01</div>
+                                <div class="font-hud text-[17px] font-semibold tracking-wide text-white mt-1">Agentbox contacts</div>
+                                <div class="text-xs text-slate-500 mt-1">contact.csv + categories, agents and decoded notes</div>
+                            </button>
+                            <button data-prompt="general cleaning" class="quick hud group p-4 hover:bg-holo/[0.04] transition-colors">
+                                <div class="code text-arc/80">PROTOCOL 02</div>
+                                <div class="font-hud text-[17px] font-semibold tracking-wide text-white mt-1">General cleaning</div>
+                                <div class="text-xs text-slate-500 mt-1">Any other CRM export — you confirm the columns</div>
+                            </button>
+                            <button data-prompt="how do we split couples?" class="quick hud group p-4 hover:bg-holo/[0.04] transition-colors">
+                                <div class="code">QUERY</div>
+                                <div class="font-hud text-[17px] font-semibold tracking-wide text-white mt-1">How do we split couples?</div>
+                                <div class="text-xs text-slate-500 mt-1">Answered from your cleaning guides</div>
+                            </button>
+                            <button data-prompt="is it safe to import?" class="quick hud group p-4 hover:bg-holo/[0.04] transition-colors">
+                                <div class="code">QUERY</div>
+                                <div class="font-hud text-[17px] font-semibold tracking-wide text-white mt-1">Is it safe to import?</div>
+                                <div class="text-xs text-slate-500 mt-1">A plain-English sign-off assessment</div>
+                            </button>
+                        </div>
+                    </section>
+                    <div id="messages" class="max-w-3xl mx-auto px-4 sm:px-6 py-8 space-y-7 hidden"></div>
+                </div>
+
+                <!-- Composer -->
+                <div class="shrink-0 px-4 sm:px-6 pb-4 pt-2">
+                    <div class="max-w-3xl mx-auto">
+                        <div id="pendingFiles" class="flex flex-wrap items-center gap-2 mb-2"></div>
+                        <div class="composer hud flex items-end gap-1 px-2 py-2">
+                            <label class="p-2.5 text-slate-500 hover:text-holo cursor-pointer transition-colors" title="Attach files">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
+                                <input id="composerFile" type="file" accept=".xlsx,.xls,.csv" multiple class="hidden">
+                            </label>
+                            <span class="font-mono text-holo/70 py-2.5 pl-1 select-none">›</span>
+                            <textarea id="input" rows="1" placeholder="Give DARIS an instruction…" class="flex-1 bg-transparent resize-none outline-none text-[15px] text-slate-100 placeholder-slate-600 py-2.5 max-h-40"></textarea>
+                            <span id="listening" class="hidden items-center gap-2 py-2.5 pr-1 font-hud text-[11px] tracking-[0.2em] text-alert"><span class="wave"><i></i><i></i><i></i><i></i></span>LISTENING</span>
+                            <button id="micBtn" class="p-2.5 text-slate-500 hover:text-holo transition-colors" title="Speak (uses your browser's online speech service)">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11a7 7 0 01-14 0m7 7v3m0-7a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+                            </button>
+                            <button id="voiceBtn" class="hidden sm:block p-2.5 text-slate-500 hover:text-holo transition-colors" title="Read replies aloud (Windows voice, offline)">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728M11 5L6 9H2v6h4l5 4V5z"/></svg>
+                            </button>
+                            <button id="sendBtn" class="btn-hud ml-1 px-3 sm:px-4 py-2.5 text-[12px] text-void bg-holo hover:bg-white disabled:bg-holo/30 shadow-[0_0_20px_rgba(94,231,255,0.35)]" title="Execute (Enter)" aria-label="Execute">
+                                <span class="hidden sm:inline">Execute</span>
+                                <svg class="sm:hidden w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14m-6-6l6 6-6 6"/></svg>
+                            </button>
+                        </div>
+                        <div class="mt-2 hidden sm:flex justify-center gap-4 code">
+                            <span>ENTER · EXECUTE</span><span>SHIFT+ENTER · NEW LINE</span><span>DROP FILES ANYWHERE</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="dropOverlay" class="pointer-events-none opacity-0 invisible absolute inset-4 z-30 hud hot flex items-center justify-center" style="background: rgba(4,20,30,0.85);">
+                    <div class="text-center">
+                        <div class="core busy w-24 h-24 mx-auto" data-core></div>
+                        <div class="font-hud text-2xl font-bold tracking-[0.2em] text-white mt-5 glow-text">RELEASE TO INGEST</div>
+                        <div class="code mt-2">XLSX · XLS · CSV</div>
+                    </div>
+                </div>
+            </main>
+
+            <!-- ===================== TELEMETRY ===================== -->
+            <aside class="w-[18rem] shrink-0 hidden xl:flex flex-col gap-4 p-4 overflow-y-auto">
+                <section class="hud p-4">
+                    <div class="flex items-center justify-between mb-3"><span class="label">System</span><span class="code">SYS.00</span></div>
+                    <div id="sysPanel" class="space-y-2 text-[12px] font-mono"></div>
+                </section>
+                <section class="hud p-4 flex-1">
+                    <div class="flex items-center justify-between mb-3"><span class="label">Telemetry</span><span class="code">LAST RUN</span></div>
+                    <div id="telemetry"></div>
+                </section>
+            </aside>
+        </div>
+    </div>
+
+    <!-- ===================== SETTINGS ===================== -->
+    <div id="settingsModal" class="fixed inset-0 z-[90] hidden items-center justify-center p-4" style="background: rgba(2,6,12,0.82); backdrop-filter: blur(4px);">
+        <div class="hud w-full max-w-2xl max-h-[92vh] overflow-y-auto" style="background: #050f19;">
+            <div class="flex items-center gap-3 px-5 py-3 border-b" style="border-color: var(--line);">
+                <span class="w-1.5 h-1.5 bg-holo shadow-[0_0_8px_#5EE7FF]"></span>
+                <span class="label !text-slate-100">AI engine</span><span class="code">CFG.01</span>
+                <button id="settingsClose" class="ml-auto text-slate-500 hover:text-white" aria-label="Close">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-width="1.5" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="p-5 space-y-5">
+                <p class="text-[13px] text-slate-400">Choose who answers DARIS's questions. Rules, merging and reconciliation always run on this PC — this only changes the AI used for column suggestions, summaries and chat.</p>
+
+                <div id="providerCards" class="grid sm:grid-cols-3 gap-2"></div>
+
+                <div id="providerFields" class="space-y-3"></div>
+
+                <div id="cloudPrivacy" class="hidden border p-4 space-y-3" style="border-color: rgba(255,181,71,0.35); background: rgba(255,181,71,0.04);">
+                    <div class="label !text-arc">Cloud privacy</div>
+                    <p class="text-[12.5px] text-slate-300 leading-relaxed">With a cloud model, DARIS sends: column names, file and sheet names, run statistics and issue text, your chat messages, and up to 5 sample values per unclear column. Guides from your <code class="text-holo">reference</code> folder are sent when relevant to a question.</p>
+                    <label class="flex items-start gap-3 cursor-pointer">
+                        <input id="optSamples" type="checkbox" class="mt-1 accent-[#FF4D6D]">
+                        <span class="text-[13px] text-slate-200">Send <b>real</b> sample values<span class="block text-[12px] text-slate-500">Off (recommended): values go as patterns only — <code>0412 345 678</code> → <code>9999 999 999</code> — and emails / long numbers are blanked out of text.</span></span>
+                    </label>
+                </div>
+
+                <label class="flex items-start gap-3 cursor-pointer">
+                    <input id="optAutoApply" type="checkbox" class="mt-1 accent-[#5EE7FF]">
+                    <span class="text-[13px] text-slate-200">Let the AI apply column mappings it's confident about<span class="block text-[12px] text-slate-500">Off (recommended): AI picks appear as suggestions in Column Mapping for you to accept. Turn on only after you've checked its suggestions are reliable.</span></span>
+                </label>
+
+                <div id="settingsResult" class="hidden text-[13px] px-3 py-2 border"></div>
+            </div>
+            <div class="flex items-center gap-3 px-5 py-3 border-t" style="border-color: var(--line);">
+                <button id="settingsTest" class="btn-hud text-[12px] px-4 py-2 border text-slate-200 hover:bg-white/[0.04]" style="border-color: var(--line);" title="Saves, then sends one tiny request">Save &amp; test</button>
+                <span class="code hidden sm:inline">A CLOUD TEST COSTS A FRACTION OF A CENT</span>
+                <button id="settingsSave" class="btn-hud ml-auto text-[12px] px-5 py-2 text-void bg-holo hover:bg-white">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast" class="fixed bottom-6 right-6 z-[95] hidden max-w-sm px-4 py-3 text-sm"></div>
+
+<script>
+const API = 'http://127.0.0.1:8000';
+const $ = id => document.getElementById(id);
+const store = {
+    get(k) { try { return JSON.parse(sessionStorage.getItem(k)); } catch (_) { return null; } },
+    set(k, v) { try { sessionStorage.setItem(k, JSON.stringify(v)); } catch (_) {} },
+    del(k) { try { sessionStorage.removeItem(k); } catch (_) {} },
+};
+const state = { sid: null, busy: false, transcript: [], speak: false, files: [], status: null, generalCols: {}, generalModes: {} };
+
+/* ---------------- the core (concentric HUD rings) ---------------- */
+function coreSVG(hero) {
+    const ticks = Array.from({ length: hero ? 72 : 36 }, (_, i) => {
+        const a = i * (360 / (hero ? 72 : 36)) * Math.PI / 180, long = i % (hero ? 6 : 3) === 0;
+        const r1 = 94, r2 = long ? 86 : 90;
+        return `<line x1="${100 + r1 * Math.cos(a)}" y1="${100 + r1 * Math.sin(a)}" x2="${100 + r2 * Math.cos(a)}" y2="${100 + r2 * Math.sin(a)}" stroke="rgba(94,231,255,${long ? 0.55 : 0.22})" stroke-width="${long ? 1.2 : 0.8}"/>`;
+    }).join('');
+    const id = 'g' + Math.random().toString(36).slice(2, 8);
+    return `<svg viewBox="0 0 200 200" aria-hidden="true">
+        <defs>
+            <radialGradient id="${id}h" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stop-color="#E9FDFF"/><stop offset="28%" stop-color="#8CF0FF"/>
+                <stop offset="62%" stop-color="#1AA6CC" stop-opacity="0.75"/><stop offset="100%" stop-color="#0A3A4D" stop-opacity="0"/>
+            </radialGradient>
+            <radialGradient id="${id}a" cx="50%" cy="50%" r="50%">
+                <stop offset="60%" stop-color="#5EE7FF" stop-opacity="0"/><stop offset="100%" stop-color="#5EE7FF" stop-opacity="0.12"/>
+            </radialGradient>
+        </defs>
+        <circle cx="100" cy="100" r="99" fill="url(#${id}a)"/>
+        <g class="r3">${ticks}</g>
+        <g class="r1"><circle cx="100" cy="100" r="78" fill="none" stroke="#5EE7FF" stroke-opacity="0.7" stroke-width="2" stroke-dasharray="62 20 8 20" /></g>
+        <g class="r2"><circle cx="100" cy="100" r="68" fill="none" stroke="#FFB547" stroke-opacity="0.55" stroke-width="1" stroke-dasharray="3 6"/>
+            <circle cx="100" cy="100" r="62" fill="none" stroke="#5EE7FF" stroke-opacity="0.35" stroke-width="5" stroke-dasharray="30 70" /></g>
+        <circle cx="100" cy="100" r="54" fill="none" stroke="#5EE7FF" stroke-opacity="0.25" stroke-width="0.8"/>
+        <g class="heart"><circle cx="100" cy="100" r="46" fill="url(#${id}h)"/>
+            <circle cx="100" cy="100" r="22" fill="none" stroke="#E9FDFF" stroke-opacity="0.6" stroke-width="1"/>
+            <circle cx="100" cy="100" r="9" fill="#F4FEFF"/></g>
+    </svg>`;
+}
+function mountCores(root = document) {
+    root.querySelectorAll('[data-core]:not([data-mounted])').forEach(el => {
+        el.innerHTML = coreSVG(el.dataset.size === 'hero'); el.dataset.mounted = '1';
+    });
+}
+
+/* ---------------- helpers ---------------- */
+function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function fmt(n) { return typeof n === 'number' ? n.toLocaleString() : esc(n); }
+function md(text) {
+    const inline = s => esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code>$1</code>');
+    const out = []; let list = null;
+    for (const raw of String(text || '').split('\n')) {
+        const line = raw.trimEnd();
+        const bullet = line.match(/^\s*[-*•]\s+(?:[-*•]\s*)*(.*)$/);   // small models write "- -item" too
+        if (bullet) { (list ||= []).push(`<li>${inline(bullet[1])}</li>`); continue; }
+        if (list) { out.push(`<ul>${list.join('')}</ul>`); list = null; }
+        if (line.trim()) out.push(`<p>${inline(line)}</p>`);
+    }
+    if (list) out.push(`<ul>${list.join('')}</ul>`);
+    return out.join('');
+}
+function stamp() { return new Date().toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit', hour12: false }); }
+function toast(msg, tone = 'info') {
+    const t = $('toast');
+    t.className = 'fixed bottom-6 right-6 z-[95] max-w-sm px-4 py-3 text-sm hud ' +
+        (tone === 'error' ? 'text-red-200 !border-alert/50' : 'text-slate-200');
+    t.innerHTML = `<div class="code mb-1 ${tone === 'error' ? '!text-alert' : ''}">${tone === 'error' ? 'ALERT' : 'NOTICE'}</div>${esc(msg)}`;
+    clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.add('hidden'), 4500);
+}
+function scrollDown() { const s = $('scroller'); s.scrollTop = s.scrollHeight; }
+function setBusy(b) {
+    state.busy = b;
+    $('sendBtn').disabled = b;
+    $('brandCore').classList.toggle('busy', b);
+    document.querySelectorAll('.quick').forEach(q => q.disabled = b);
+}
+async function api(path, opts = {}) {
+    const res = await fetch(API + path, opts);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || `Server returned ${res.status}`);
+    return data;
+}
+
+/* ---------------- boot ---------------- */
+function bootLine(text, tone = '') {
+    const d = document.createElement('div'); d.className = 'boot-line ' + tone;
+    d.innerHTML = `<span class="text-slate-600">${stamp()}</span>  ${text}`;
+    $('bootLog').appendChild(d);
+}
+function endBoot() { $('boot').classList.add('done'); store.set('daris_booted', true); }
+async function runBoot(statusPromise) {
+    if (store.get('daris_booted')) { endBoot(); return; }
+    $('boot').addEventListener('click', endBoot);
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    bootLine('INITIALISING REASONING CORE…'); await wait(260);
+    const s = await statusPromise;
+    if (s) {
+        bootLine(`ZENU SCHEMA LINKED · <span class="text-white">${s.zenu_fields}</span> FIELDS`); await wait(200);
+        const r = s.references || {};
+        bootLine(`REFERENCE LIBRARY · <span class="text-white">${fmt(r.suburbs || 0)}</span> SUBURBS · `
+            + `<span class="text-white">${(r.guides || []).length}</span> GUIDES`); await wait(200);
+        const mem = Object.values(s.memory || {}).reduce((a, b) => a + b, 0);
+        bootLine(`MEMORY BANKS · <span class="text-white">${mem}</span> LEARNED MAPPINGS`); await wait(200);
+        const ok = s.llm.online && s.llm.model_installed;
+        bootLine(ok
+            ? `NEURAL ENGINE · <span class="text-white">${esc(s.llm.label)} · ${esc(s.llm.model)}</span>`
+              + (s.llm.cloud ? ' <span class="text-arc">CLOUD</span>' : ' ONLINE')
+            : '<span class="text-arc">NEURAL ENGINE OFFLINE · RULE ENGINE ACTIVE</span>'); await wait(200);
+        bootLine('<span class="text-ok">ALL SYSTEMS NOMINAL</span>');
+    } else {
+        bootLine('<span class="text-alert">ENGINE UNREACHABLE · START THE API ON PORT 8000</span>');
+    }
+    await wait(650); endBoot();
+}
+
+/* ---------------- status + session ---------------- */
+async function loadStatus() {
+    let d = null;
+    try { d = await api('/api/daris/status'); } catch (_) {}
+    state.status = d;
+    const sys = $('sysPanel');
+    const row = (k, v, tone = 'text-slate-200') => `<div class="flex justify-between gap-2"><span class="text-slate-500">${k}</span><span class="${tone} truncate">${v}</span></div>`;
+    if (!d) {
+        $('hdrCore').textContent = 'OFFLINE'; $('hdrCore').className = 'text-alert';
+        sys.innerHTML = row('ENGINE', 'UNREACHABLE', 'text-alert') + `<div class="text-[11px] text-slate-500 font-sans mt-2">Start the API: <code class="text-holo">python -m uvicorn main:app --port 8000</code></div>`;
+        return null;
+    }
+    const mem = d.memory || {}, learned = Object.values(mem).reduce((a, b) => a + b, 0);
+    const aiLearned = Object.entries(mem).filter(([k]) => k.startsWith('llm')).reduce((a, [, v]) => a + v, 0);
+    const llmOk = d.llm.online && d.llm.model_installed;
+    const cloud = !!d.llm.cloud, realData = cloud && d.privacy?.send_samples_to_cloud;
+    const refs = d.references || {};
+    $('hdrCore').textContent = 'ONLINE'; $('hdrCore').className = 'text-ok';
+    $('hdrModel').textContent = llmOk ? d.llm.model : 'RULES ONLY';
+    $('hdrModel').className = llmOk ? 'text-slate-200' : 'text-arc';
+    $('hdrMemory').textContent = `${learned} MAPPINGS`;
+    // Privacy badge: green local · amber cloud with masked values · red cloud with real values
+    const badge = !cloud ? ['text-ok/90', 'bg-ok', '#3DFFB0', 'OFFLINE · SECURE', 'Everything runs on this PC']
+        : realData ? ['text-alert', 'bg-alert', '#FF4D6D', `CLOUD · ${d.llm.label} · REAL DATA`, 'Real sample values are sent to the cloud model']
+        : ['text-arc', 'bg-arc', '#FFB547', `CLOUD · ${d.llm.label} · MASKED`, 'Only value patterns and redacted text leave this PC'];
+    $('privacyBadge').className = `hidden sm:flex items-center gap-2 font-hud text-[11px] font-semibold tracking-[0.2em] ${badge[0]}`;
+    $('privacyBadge').innerHTML = `<span class="w-1.5 h-1.5 ${badge[1]}" style="box-shadow:0 0 8px ${badge[2]}"></span>${esc(badge[3])}`;
+    $('privacyBadge').title = badge[4];
+    sys.innerHTML =
+        row('ENGINE', 'ONLINE', 'text-ok') +
+        row('AI', `${esc(d.llm.label).toUpperCase()}${cloud ? ' · CLOUD' : ''}`, cloud ? 'text-arc' : 'text-slate-200') +
+        row('NEURAL', llmOk ? 'ONLINE' : cloud ? 'NOT SET UP' : d.llm.online ? 'MODEL MISSING' : 'OFFLINE', llmOk ? 'text-ok' : 'text-arc') +
+        row('MODEL', esc(d.llm.model)) +
+        row('SCHEMA', `${d.zenu_fields} FIELDS`) +
+        row('SUBURBS', fmt(refs.suburbs || 0)) +
+        row('GUIDES', `${(refs.guides || []).length} · ${refs.sections || 0} SECTIONS`) +
+        row('LEARNED', `${mem.user || 0} YOU · ${aiLearned} AI`) +
+        row('FILES', `${state.files.length} IN BAY`);
+    return d;
+}
+
+async function ensureSession(fresh = false) {
+    const saved = fresh ? null : store.get('daris_sid');
+    if (saved) {
+        try {
+            const s = await api(`/api/daris/session/${saved}`);
+            state.sid = saved; renderFiles(s.files); return;
+        } catch (_) { /* expired - fall through */ }
+    }
+    const s = await api('/api/daris/session', { method: 'POST' });
+    state.sid = s.session_id; store.set('daris_sid', state.sid);
+    state.transcript = []; store.set('daris_transcript', []);
+    renderFiles(s.files);
+}
+
+/* ---------------- files ---------------- */
+function renderFiles(files) {
+    state.files = files || [];
+    $('fileCount').textContent = state.files.length;
+    $('sessionTag').textContent = state.sid ? state.sid.toUpperCase() : '—';
+    $('fileList').innerHTML = state.files.map((f, i) => {
+        const sub = f.error ? `<span class="text-alert">${esc(f.error)}</span>`
+            : `${fmt(f.rows)} ROWS · ${f.sheets.length} SHEET${f.sheets.length > 1 ? 'S' : ''} · ${fmt(f.size_kb)} KB`;
+        return `<div class="group flex items-start gap-2.5 px-2.5 py-2 border ${f.error ? 'border-alert/40' : ''}" style="${f.error ? '' : 'border-color: var(--line);'} background: rgba(94,231,255,0.025);">
+            <span class="font-mono text-[10px] mt-0.5 ${f.error ? 'text-alert' : 'text-ok'}">${String(i + 1).padStart(2, '0')}</span>
+            <div class="min-w-0 flex-1"><div class="text-[12px] text-slate-200 truncate" title="${esc(f.name)}">${esc(f.name)}</div>
+                <div class="code mt-0.5 !tracking-normal">${sub}</div></div>
+            <button data-remove="${esc(f.name)}" class="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-alert transition-opacity" title="Remove from bay">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
+        </div>`;
+    }).join('') || '<div class="code text-center py-1">BAY EMPTY</div>';
+    if (state.status) loadStatus();
+}
+
+async function uploadFiles(fileList) {
+    const files = Array.from(fileList || []).filter(f => /\.(xlsx|xls|csv)$/i.test(f.name));
+    if (!files.length) return toast('Only .xlsx, .xls and .csv files are supported.', 'error');
+    if (!state.sid) await ensureSession();
+    hideWelcome();
+    $('pendingFiles').innerHTML = files.map(f => `<span class="chip !text-holo">${esc(f.name)}</span>`).join('') +
+        '<span class="flex items-center gap-2 code"><span class="scanbar !w-16"></span>SCANNING</span>';
+    setBusy(true);
+    const fd = new FormData(); files.forEach(f => fd.append('files', f));
+    try {
+        const d = await api(`/api/daris/session/${state.sid}/upload`, { method: 'POST', body: fd });
+        renderFiles(d.files);
+        addMessage('user', `Ingested ${files.length} file${files.length > 1 ? 's' : ''}: ${files.map(f => f.name).join(', ')}`);
+        const ok = d.added.filter(f => !f.error);
+        const msg = addMessage('assistant', '');
+        if (ok.length) {
+            const rows = ok.reduce((a, f) => a + f.rows, 0);
+            const isAgentbox = ok.some(f => /^contact\.csv$/i.test(f.name));
+            const review = isAgentbox ? [] : ok.flatMap(f => f.sheets.flatMap(s => s.review));
+            setText(msg, `Scan complete — **${ok.length} file${ok.length > 1 ? 's' : ''}**, ${rows.toLocaleString()} data rows. ` +
+                (review.length ? `${review.length} column${review.length > 1 ? 's' : ''} I'm not sure about — you'll see them in the mapping review.` : 'Column structure looks clean.') +
+                (isAgentbox ? ` Looks like **Agentbox** — say **clean agentbox contacts**.` : ` Say **general cleaning** (or **clean agentbox contacts** for Agentbox CSVs).`) +
+                ` I'll show you the column mapping first.`);
+            appendCard(msg, { kind: 'files', files: d.added });
+        }
+        const bad = d.added.filter(f => f.error);
+        if (bad.length) setText(msg, (msg.dataset.text ? msg.dataset.text + '\n\n' : '') +
+            bad.map(f => `- Couldn't read **${f.name}**: ${f.error}`).join('\n'));
+    } catch (e) {
+        toast(e.message, 'error');
+    } finally {
+        $('pendingFiles').innerHTML = '';
+        setBusy(false);
+    }
+}
+
+async function removeFile(name) {
+    try {
+        const d = await api(`/api/daris/session/${state.sid}/file/${encodeURIComponent(name)}`, { method: 'DELETE' });
+        renderFiles(d.files);
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+/* ---------------- messages ---------------- */
+function hideWelcome() { $('welcome').classList.add('hidden'); $('messages').classList.remove('hidden'); }
+
+function addMessage(role, text, opts = {}) {
+    hideWelcome();
+    const wrap = document.createElement('div');
+    wrap.className = opts.restore ? '' : 'enter';
+    const time = opts.time || stamp();
+    wrap.dataset.time = time;
+    if (role === 'user') {
+        wrap.innerHTML = `<div class="flex flex-col items-end">
+            <div class="code mb-1.5"><span class="text-arc/80">YOU</span> · ${esc(time)}</div>
+            <div class="bubble max-w-[85%] text-[14px] text-slate-100 px-4 py-2.5 whitespace-pre-wrap border" style="border-color: rgba(255,181,71,0.25); background: linear-gradient(180deg, rgba(255,181,71,0.07), rgba(255,181,71,0.02));">${esc(text)}</div></div>`;
+        $('messages').appendChild(wrap);
+    } else {
+        wrap.innerHTML = `<div class="flex gap-3.5">
+            <div class="core w-8 h-8 mt-0.5" data-core></div>
+            <div class="msg-ai flex-1 min-w-0 pl-4">
+                <div class="code mb-1.5"><span class="text-holo">DARIS</span> · ${esc(time)}</div>
+                <div class="status hidden items-center gap-3 mb-2"><span class="scanbar"></span><span class="status-text font-hud text-[12px] font-semibold tracking-[0.14em] uppercase text-holo/80"></span></div>
+                <div class="body md text-[14.5px] leading-relaxed text-slate-300"></div>
+                <div class="cards space-y-3 mt-4 empty:hidden empty:mt-0"></div></div></div>`;
+        $('messages').appendChild(wrap);
+        mountCores(wrap);
+        if (text) setText(wrap, text);
+    }
+    if (!opts.restore) {
+        wrap.dataset.idx = state.transcript.length;
+        state.transcript.push({ role, text, cards: [], time });
+        saveTranscript();
+    }
+    scrollDown();
+    return wrap;
+}
+function setText(msg, text) {
+    msg.dataset.text = text;
+    msg.querySelector('.body').innerHTML = md(text);
+    const t = state.transcript[msg.dataset.idx]; if (t) { t.text = text; saveTranscript(); }
+}
+function setStatus(msg, text) {
+    const s = msg.querySelector('.status');
+    s.classList.toggle('hidden', !text); s.classList.toggle('flex', !!text);
+    msg.querySelector('.status-text').textContent = text || '';
+    msg.querySelector('[data-core]')?.classList.toggle('busy', !!text);
+}
+function appendCard(msg, card) {
+    const el = document.createElement('div');
+    el.className = 'enter';
+    el.innerHTML = renderCard(card);
+    msg.querySelector('.cards').appendChild(el);
+    const t = state.transcript[msg.dataset.idx]; if (t) { t.cards.push(card); saveTranscript(); }
+    if (card.kind === 'general_result') renderTelemetry(card);
+    scrollDown();
+}
+function saveTranscript() { store.set('daris_transcript', state.transcript.slice(-60)); }
+function restoreTranscript() {
+    const saved = store.get('daris_transcript') || [];
+    if (!saved.length) return;
+    state.transcript = saved;
+    saved.forEach((m, i) => {
+        const el = addMessage(m.role, m.text, { restore: true, time: m.time });
+        el.dataset.idx = i;
+        (m.cards || []).forEach(c => { const d = document.createElement('div'); d.innerHTML = renderCard(c); el.querySelector('.cards').appendChild(d); });
+    });
+    const last = saved.flatMap(m => m.cards || []).filter(c => c.kind === 'general_result').pop();
+    if (last) renderTelemetry(last);
+}
+
+/* ---------------- telemetry + gauges ---------------- */
+const SEV_COLOR = { FAIL: '#FF4D6D', WARN: '#FFB547', INFO: '#5EE7FF', PASS: '#3DFFB0' };
+function gauge(pct, label, color) {
+    const r = 33, C = 2 * Math.PI * r, p = Math.max(0, Math.min(1, pct || 0));
+    return `<div class="flex flex-col items-center">
+        <div class="relative w-[84px] h-[84px]">
+            <svg viewBox="0 0 80 80" class="w-full h-full">
+                <circle cx="40" cy="40" r="38" class="g-tick"/>
+                <circle cx="40" cy="40" r="${r}" class="g-track"/>
+                <circle cx="40" cy="40" r="${r}" class="g-val" style="color:${color}" stroke="${color}" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - p)}" transform="rotate(-90 40 40)"/>
+            </svg>
+            <div class="absolute inset-0 flex items-center justify-center font-mono text-[16px] font-semibold text-white">${Math.round(p * 100)}<span class="text-[10px] text-slate-500">%</span></div>
+        </div>
+        <div class="code mt-1.5 text-center">${label}</div></div>`;
+}
+function renderTelemetry(c) {
+    const s = c.stats || {};
+    const count = sevs => (c.issues || []).filter(i => i.severity === sevs).length;
+    const phoneP = s.phones_reconciled ? 1 : (s.phone_values_in ? 0 : 1);
+    const emails = s['Email (O)'] || 0;
+    const emailP = emails ? (emails - (s.email_not_okay || 0)) / emails : 1;
+    const col = SEV_COLOR[c.overall] || SEV_COLOR.INFO;
+    $('telemetry').innerHTML = `
+        <div class="flex items-center gap-3 mb-4 p-3 border" style="border-color:${col}55; background:${col}0d;">
+            <div class="font-hud text-3xl font-bold tracking-[0.12em]" style="color:${col}; text-shadow: 0 0 16px ${col}88;">${esc(c.overall)}</div>
+            <div class="min-w-0 text-[11px] text-slate-400 leading-tight">${count('FAIL')} fail · ${count('WARN')} warn<br><span class="code !tracking-normal block truncate" title="${esc(c.output_file)}">${esc(c.output_file)}</span></div>
+        </div>
+        <div class="grid grid-cols-2 gap-y-4">
+            ${gauge(phoneP, 'PHONES RECONCILED', phoneP === 1 ? '#3DFFB0' : '#FF4D6D')}
+            ${gauge(emailP, 'EMAIL OKAY', emailP === 1 ? '#3DFFB0' : '#FFB547')}
+            <div class="flex flex-col items-center justify-center">
+                <div class="font-mono text-[26px] font-semibold text-holo">${fmt(s.split_rows ?? 0)}</div>
+                <div class="code mt-1.5 text-center">SPLIT PEOPLE</div></div>
+            <div class="flex flex-col items-center justify-center">
+                <div class="font-mono text-[26px] font-semibold ${s['Invalid numbers (W:Z)'] ? 'text-arc' : 'text-ok'}">${fmt(s['Invalid numbers (W:Z)'] ?? 0)}</div>
+                <div class="code mt-1.5 text-center">INVALID NUMBERS</div></div>
+        </div>
+        <div class="rule my-4"></div>
+        <div class="space-y-1.5 font-mono text-[11px]">
+            ${[['SOURCE ROWS', s.source_rows], ['SUMMARY ROWS', s.total_rows], ['ID TAG', c.id_tag || '—'], ['RUNTIME', c.seconds + 's']].map(([a, b]) => `<div class="flex justify-between"><span class="text-slate-500">${a}</span><span class="text-slate-200">${fmt(b)}</span></div>`).join('')}
+        </div>
+        <a href="${API}${esc(c.download)}" class="btn-hud mt-4 block text-center text-[12px] py-2.5 text-void bg-holo hover:bg-white shadow-[0_0_18px_rgba(94,231,255,0.3)]">Export workbook</a>`;
+}
+function renderTelemetryEmpty() {
+    $('telemetry').innerHTML = `<div class="text-center py-6">
+        <div class="code">AWAITING FIRST RUN</div>
+        <div class="text-[12px] text-slate-500 mt-2 leading-relaxed">Phone reconciliation, email checks and split counts appear here after an Agentbox or General cleaning run.</div></div>`;
+}
+
+/* ---------------- cards ---------------- */
+const sev = s => `<span class="sev sev-${esc(s)}">${esc(s)}</span>`;
+const cardShell = (title, code, body, extra = '') => `<div class="hud">
+    <div class="flex items-center gap-3 px-4 py-2.5 border-b" style="border-color: var(--line);">
+        <span class="w-1.5 h-1.5 bg-holo shadow-[0_0_8px_#5EE7FF]"></span><span class="label !text-slate-100">${title}</span><span class="code">${code}</span><span class="ml-auto">${extra}</span></div>
+    <div class="p-4">${body}</div></div>`;
+function issueList(issues) {
+    if (!issues.length) return '<div class="text-sm text-ok">No issues detected.</div>';
+    return `<div class="space-y-2.5">${issues.map(i => `<div class="flex gap-3 items-start text-[13px]">${sev(i.severity)}
+        <div class="min-w-0"><span class="code mr-1.5 !tracking-normal">${esc(i.area)}</span><span class="text-slate-300 break-words">${esc(i.detail)}</span></div></div>`).join('')}</div>`;
+}
+function renderCard(c) {
+    if (c.kind === 'files') {
+        const body = c.files.filter(f => !f.error).map(f => `<div class="mb-4 last:mb-0">
+            <div class="flex items-baseline gap-2 mb-2"><span class="text-[14px] font-medium text-white truncate">${esc(f.name)}</span><span class="code">${fmt(f.size_kb)} KB</span></div>
+            ${f.sheets.map(s => { const pct = s.columns ? Math.round(s.mapped / s.columns * 100) : 0; return `
+            <div class="border p-3 mb-2" style="border-color: var(--line); background: rgba(94,231,255,0.02);">
+                <div class="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px]"><span class="text-slate-200">${esc(s.sheet)}</span>
+                    <span class="text-slate-500">${fmt(s.rows)} ROWS</span><span class="text-slate-500">${s.columns} COLS</span>${s.header_row ? `<span class="text-slate-500">HEADER R${s.header_row}</span>` : '<span class="text-arc">NO HEADER ROW · MAPPED BY VALUES</span>'}</div>
+                <div class="mt-3 flex items-center gap-3"><div class="flex-1 h-[3px]" style="background: rgba(94,231,255,0.1);"><div class="h-full" style="width:${pct}%; background: linear-gradient(90deg, #2AA9C9, #5EE7FF); box-shadow: 0 0 8px #5EE7FF;"></div></div>
+                    <span class="font-mono text-[11px] text-holo">${s.mapped}/${s.columns} ZENU</span></div>
+                ${Object.keys(s.types).length ? `<div class="mt-2.5 flex flex-wrap gap-1.5">${Object.entries(s.types).map(([t, n]) => `<span class="chip">${esc(t).toUpperCase()} ×${n}</span>`).join('')}</div>` : ''}
+                ${s.review.length ? `<div class="mt-2.5 text-[12px] text-arc">▸ Needs review: ${s.review.map(esc).join(', ')}</div>` : ''}
+            </div>`; }).join('')}</div>`).join('');
+        return cardShell('Ingest scan', 'SCAN.02', body);
+    }
+    if (c.kind === 'general_mapping') {
+        const key = `${c.file}|${c.sheet}`;
+        state.generalCols[key] = Object.fromEntries(c.columns.map(col => [col.name, col]));
+        state.generalModes[key] = { flag: { ...(c.flag_modes || {}) }, date: {}, contactable: c.mapping.contactable || '',
+            mapping: { ...c.mapping }, dateModes: c.date_modes || {}, flagRoles: c.flag_roles || [], dateRoles: c.date_roles || [] };
+        Object.keys(state.generalModes[key].flag).forEach(r => { state.generalModes[key].flag[r].col = c.mapping[r]; state.generalModes[key].flag[r].guessed = true; });
+        const preview = name => {
+            const col = state.generalCols[key][name];
+            if (!col) return '<span class="text-slate-600">—</span>';
+            return `<span class="text-slate-400">${col.samples.map(esc).join(' <span class="text-slate-600">·</span> ') || '<span class="text-slate-600">(empty)</span>'}</span>
+                <span class="code !tracking-normal ml-1">${fmt(col.filled)} filled</span>`;
+        };
+        const options = sel => `<option value="">— not mapped —</option>` + c.columns.map(col =>
+            `<option value="${esc(col.name)}"${col.name === sel ? ' selected' : ''}>${esc(col.name)}</option>`).join('');
+        const groups = c.groups.map(g => {
+            const any = g.roles.some(r => r.column);
+            const rows = g.roles.map(r => `<div class="grid sm:grid-cols-[minmax(0,11rem)_minmax(0,13rem)_minmax(0,1fr)] gap-x-3 gap-y-1 items-center py-1.5 border-t" style="border-color: rgba(94,231,255,0.07);">
+                <div class="min-w-0"><div class="text-[12.5px] text-slate-200">${esc(r.label)}${r.column && r.method === 'ai' ? ' <span class="gm-how chip !text-arc !py-0" style="border-color: rgba(255,181,71,0.45);" title="Suggested by the AI from the sample values - check it">AI</span>' : r.column && r.method === 'learned' ? ' <span class="gm-how chip !text-ok !py-0" style="border-color: rgba(61,255,176,0.35);" title="You confirmed this column on an earlier run">LEARNED</span>' : ''}</div>${r.field ? `<div class="code !tracking-normal truncate">${esc(r.field)}</div>` : ''}</div>
+                <select data-role="${esc(r.role)}"${r.column && r.method === 'ai' ? ' data-ai="1"' : ''} class="gm-select w-full min-w-0 bg-transparent border px-2 py-1.5 text-[12.5px] outline-none ${r.column ? 'text-white' : 'text-slate-500'}" style="border-color: ${r.column && r.method === 'ai' ? 'rgba(255,181,71,0.7)' : r.column ? 'rgba(94,231,255,0.45)' : 'var(--line)'}; background:#06121d;">${options(r.column)}</select>
+                <div class="gm-preview min-w-0 text-[11.5px] truncate">${r.column ? preview(r.column) : ''}</div>
+                ${(c.flag_roles || []).includes(r.role) || (c.date_roles || []).includes(r.role) || r.role === 'contactable' ? `<div class="gm-opt sm:col-span-3" data-opt="${esc(r.role)}">${gmOpt(key, r.role, r.column)}</div>` : ''}</div>`).join('');
+            return `<details class="mb-2" ${any ? 'open' : ''}><summary class="cursor-pointer select-none py-1.5 label !text-slate-300">${esc(g.title)}
+                <span class="code ml-2">${g.roles.filter(r => r.column).length}/${g.roles.length}</span></summary>${rows}</details>`;
+        }).join('');
+        const unused = c.unused.length ? `<div class="mt-3 text-[12px]"><span class="code mr-2">COLUMNS WITH DATA NOT USED</span>${c.unused.map(u => `<span class="chip mr-1 mb-1 inline-block">${esc(u)}</span>`).join('')}</div>` : '';
+        const title = c.title || 'General cleaning';
+        const linked = (c.linked || []).length ? `<div class="mb-3 flex flex-wrap gap-1.5">${c.linked.map(l => l.file
+                ? `<span class="chip !text-ok" style="border-color: rgba(61,255,176,0.35);">◆ ${esc(l.file)}</span>`
+                : `<span class="chip !text-arc" style="border-color: rgba(255,181,71,0.35);">◇ ${esc(l.expected)} missing</span>`).join('')}</div>
+            ${(c.link_issues || []).length ? `<div class="mb-3">${issueList(c.link_issues.map(i => ({ ...i, area: 'Agentbox' })))}</div>` : ''}` : '';
+        const body = `<div data-general data-key="${esc(key)}" data-file="${esc(c.file)}" data-sheet="${esc(c.sheet)}" data-profile="${esc(c.profile || 'general')}" data-title="${esc(title)}">
+            ${linked}
+            ${c.headerless ? '<div class="mb-3 text-[12.5px] text-arc">▸ No header row — columns are named Column_1, Column_2 … check the samples.</div>' : ''}
+            ${groups}${unused}
+            <div class="gm-clash hidden mt-3 text-[12.5px] text-alert"></div>
+            <div class="rule my-4"></div>
+            <div class="flex flex-wrap items-end gap-x-5 gap-y-3">
+                <label class="block"><span class="code block mb-1">ID DATE TAG</span>
+                    <input class="gm-tag w-36 bg-transparent border px-2 py-1.5 font-mono text-[13px] text-white outline-none" style="border-color: var(--line); background:#06121d;" value="${esc(c.id_tag)}" placeholder="ddmmyyyy"></label>
+                <span class="code !tracking-normal pb-2">IDs become <span class="text-holo gm-example">1_${esc(c.id_tag || '')}</span>_c1, _c2 …</span>
+                <label class="flex items-center gap-2 pb-2 text-[12.5px] text-slate-300 cursor-pointer"><input type="checkbox" class="gm-remember accent-cyan-300" checked> Remember my changes</label>
+                <button data-run-general class="btn-hud ml-auto inline-flex items-center gap-2.5 text-[12px] px-5 py-2.5 text-void bg-holo hover:bg-white shadow-[0_0_20px_rgba(94,231,255,0.35)]">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3l14 9-14 9V3z"/></svg>Run ${esc(title)}</button>
+            </div></div>`;
+        return cardShell(`${esc(title)} · mapping review`, c.profile === 'agentbox' ? 'ABX.01' : 'MAP.02', body, `<span class="code">${esc(c.file)}${c.sheet !== 'csv' ? ' / ' + esc(c.sheet) : ''} · ${fmt(c.rows)} ROWS</span>`);
+    }
+    if (c.kind === 'general_result') {
+        const s = c.stats || {};
+        const tile = (label, v, tone = 'text-white') => `<div class="border px-3 py-2.5" style="border-color: var(--line); background: rgba(94,231,255,0.02);">
+            <div class="code !tracking-[0.12em]">${label}</div><div class="font-mono text-[19px] font-semibold ${tone} mt-1">${fmt(v ?? 0)}</div></div>`;
+        const warn = v => v ? 'text-arc' : 'text-white';
+        const check = (ok, label) => `<span class="flex items-center gap-2 font-hud text-[12px] font-semibold tracking-[0.14em] uppercase ${ok ? 'text-ok' : 'text-alert'}">${ok ? '◆' : '◇'} ${label}</span>`;
+        const body = `<div class="code mb-2">SUMMARY</div><div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+                ${tile('SOURCE ROWS', s.source_rows)}${tile('MAIN CONTACTS', s.main_rows)}${tile('SPLIT PEOPLE (BOTTOM)', s.split_rows, 'text-holo')}${tile('SUMMARY ROWS', s.total_rows)}</div>
+            <div class="code mb-2">PHONES &amp; EMAILS</div><div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+                ${tile('MOBILES', s['Mobile (G)'])}${tile('HOME LANDLINES', s['Home Landline (J)'])}${tile('WORK LANDLINES', s['Work Landline (L)'])}${tile('FAX', s['Fax (N)'])}
+                ${tile('EMAILS', s['Email (O)'])}${tile('INVALID NUMBERS', s['Invalid numbers (W:Z)'], warn(s['Invalid numbers (W:Z)']))}
+                ${tile('INVALID / EXTRA EMAILS', s['Invalid/extra email (U)'], warn(s['Invalid/extra email (U)']))}${tile('EMAIL NOT OKAY', s.email_not_okay, warn(s.email_not_okay))}</div>
+            <div class="code mb-2">NAMES &amp; ADDRESSES</div><div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                ${tile('RECORDS SPLIT', s.records_split)}${tile('COUPLES LINKED (SPOUSE ID)', s.couples_linked_from_spouse_id)}${tile('NAME NOTES', s.name_notes, warn(s.name_notes))}${tile('SUBURB SPLIT FROM LINE 1', s.addresses_split)}${tile('STATE FROM POSTCODE', s.state_from_postcode)}${tile('ADDRESS NOTES', s.address_notes, warn(s.address_notes))}</div>
+            <div class="mt-4 flex flex-wrap gap-x-6 gap-y-2">
+                ${check(s.phones_reconciled, `${fmt(s.phone_values_in)} phone values accounted for`)}
+                ${check(true, 'Split people after every main contact')}</div>
+            ${(c.issues || []).length ? `<div class="rule my-4"></div>${issueList(c.issues)}` : ''}
+            <div class="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2">
+                <a href="${API}${esc(c.download)}" class="btn-hud inline-flex items-center gap-2.5 text-[12px] px-5 py-2.5 text-void bg-holo hover:bg-white shadow-[0_0_20px_rgba(94,231,255,0.35)]">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v12m0 0l-4-4m4 4l4-4M4 20h16"/></svg>Export workbook</a>
+                <span class="code !tracking-normal min-w-0 break-all">${esc(c.output_file)}</span></div>`;
+        const agentbox = Object.entries(s).filter(([k]) => k.startsWith('Agentbox: '));
+        const abx = agentbox.length ? `<div class="code mb-2 mt-4">AGENTBOX LINKS</div><div class="grid grid-cols-2 sm:grid-cols-4 gap-2">${agentbox.slice(0, 8).map(([k, v]) => tile(esc(k.slice(10)).toUpperCase(), v)).join('')}</div>` : '';
+        return cardShell(`${esc(c.title || 'General cleaning')} complete`, c.profile === 'agentbox' ? 'ABX.02' : 'CLN.02',
+            body.replace('<div class="mt-4 flex flex-wrap gap-x-6', abx + '<div class="mt-4 flex flex-wrap gap-x-6'), sev(c.overall));
+    }
+    if (c.kind === 'issues') return cardShell('Issue report', 'ISS.05', issueList(c.issues));
+    if (c.kind === 'reference') {
+        const tile = (label, v) => `<div class="border px-3 py-2.5" style="border-color: var(--line); background: rgba(94,231,255,0.02);">
+            <div class="code !tracking-[0.12em]">${label}</div><div class="font-mono text-[19px] font-semibold text-white mt-1">${fmt(v)}</div></div>`;
+        const tone = { loaded: 'sev-PASS', listed: 'sev-INFO', skipped: 'sev-WARN', error: 'sev-FAIL' };
+        const files = (c.files || []).map(f => `<div class="flex gap-3 items-start text-[12.5px] py-1.5 border-t" style="border-color: rgba(94,231,255,0.07);">
+            <span class="sev ${tone[f.status] || 'sev-INFO'}">${esc(f.status).toUpperCase()}</span>
+            <div class="min-w-0"><div class="text-slate-200 break-all">${esc(f.file)}</div><div class="code !tracking-normal mt-0.5">${esc(f.detail)}</div></div></div>`).join('');
+        const body = `<div class="grid grid-cols-2 sm:grid-cols-4 gap-2">${tile('SUBURBS', c.suburbs)}${tile('SPELLING FIXES', c.spelling_fixes)}${tile('ZENU FIELDS', c.dictionary_fields)}${tile('GUIDE SECTIONS', c.sections)}</div>
+            <div class="mt-4">${files || '<div class="code">REFERENCE FOLDER EMPTY</div>'}</div>`;
+        return cardShell('Reference library', 'REF.06', body, `<span class="code">${(c.files || []).length} FILES</span>`);
+    }
+    if (c.kind === 'suburb') {
+        const rows = (c.matches || []).map(m => `<tr class="border-t" style="border-color: rgba(94,231,255,0.07);">
+            <td class="py-1.5 pr-4 text-white">${esc(m.suburb)}</td><td class="py-1.5 pr-4 font-mono text-holo">${esc(m.state)}</td><td class="py-1.5 font-mono text-slate-200">${esc(m.postcode)}</td></tr>`).join('');
+        const fix = c.spelling_fix ? `<div class="mb-3 text-[13px]"><span class="sev sev-WARN">SPELLING</span> <span class="text-slate-400 ml-2">${esc(c.query)}</span> <span class="text-slate-500">→</span> <span class="text-white">${esc(c.spelling_fix)}</span></div>` : '';
+        const body = fix + (rows
+            ? `<table class="w-full text-[13px]"><thead><tr class="code text-left"><th class="pb-2 font-normal">SUBURB</th><th class="pb-2 font-normal">STATE</th><th class="pb-2 font-normal">POSTCODE</th></tr></thead><tbody>${rows}</tbody></table>`
+            : `<div class="text-[13px] text-slate-300"><span class="sev sev-FAIL">NOT FOUND</span> <span class="ml-2">${esc(c.name)}</span>${(c.close || []).length ? `<div class="mt-3 flex flex-wrap gap-2">${c.close.map(x => `<button data-prompt="postcode of ${esc(x)}" class="quick chip !text-holo hover:!border-holo">${esc(x)}</button>`).join('')}</div>` : ''}</div>`);
+        return cardShell('Suburb check', 'GEO.07', body, `<span class="code">${(c.matches || []).length} MATCH${(c.matches || []).length === 1 ? '' : 'ES'}</span>`);
+    }
+    return '';
+}
+
+/* ---------------- chat ---------------- */
+async function send(text) {
+    text = (text ?? $('input').value).trim();
+    if (!text || state.busy) return;
+    if (!state.sid) await ensureSession();
+    $('input').value = ''; autosize();
+    addMessage('user', text);
+    const msg = addMessage('assistant', '');
+    await streamInto(msg, '/api/daris/chat', { session_id: state.sid, message: text });
+}
+
+// POST a JSON payload and render the NDJSON events (status / token / text / card / error) into msg
+async function streamInto(msg, path, payload) {
+    setBusy(true);
+    setStatus(msg, 'Processing');
+    let streamed = '';
+    const body = msg.querySelector('.body');
+    try {
+        const res = await fetch(`${API}${path}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+        });
+        if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || `Server returned ${res.status}`); }
+        const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
+        for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += dec.decode(value, { stream: true });
+            let nl;
+            while ((nl = buf.indexOf('\n')) >= 0) {
+                const line = buf.slice(0, nl); buf = buf.slice(nl + 1);
+                if (!line.trim()) continue;
+                const ev = JSON.parse(line);
+                if (ev.type === 'status') setStatus(msg, ev.text);
+                else if (ev.type === 'token') { setStatus(msg, ''); streamed += ev.text; setText(msg, streamed); body.classList.add('caret'); scrollDown(); }
+                else if (ev.type === 'text') { setStatus(msg, ''); streamed += (streamed ? '\n\n' : '') + ev.text; setText(msg, streamed); }
+                else if (ev.type === 'card') { setStatus(msg, ''); appendCard(msg, ev.card); }
+                else if (ev.type === 'error') { streamed += (streamed ? '\n\n' : '') + `⚠ ${ev.text}`; setText(msg, streamed); }
+            }
+        }
+    } catch (e) {
+        setText(msg, `⚠ I couldn't reach the engine — ${e.message}. Is the API running on port 8000?`);
+    } finally {
+        body.classList.remove('caret');
+        setStatus(msg, '');
+        setBusy(false);
+        if (state.speak && streamed) speak(streamed);
+        loadStatus();
+        $('input').focus();
+    }
+}
+
+/* ---------------- General cleaning: mapping review card ---------------- */
+function generalCheck(box) {
+    const picks = [...box.querySelectorAll('.gm-select')].map(x => x.value).filter(Boolean);
+    const clash = [...new Set(picks.filter((v, i) => picks.indexOf(v) !== i))];
+    box.querySelectorAll('.gm-select').forEach(x => {
+        const bad = x.value && clash.includes(x.value);
+        x.style.borderColor = bad ? '#FF4D6D' : x.dataset.ai && x.value ? 'rgba(255,181,71,0.7)' : x.value ? 'rgba(94,231,255,0.45)' : 'var(--line)';
+        x.classList.toggle('text-white', !!x.value); x.classList.toggle('text-slate-500', !x.value);
+    });
+    const note = box.querySelector('.gm-clash');
+    note.classList.toggle('hidden', !clash.length);
+    note.textContent = clash.length ? `Each column can only be used once — ${clash.join(', ')} is picked more than once.` : '';
+    box.querySelector('[data-run-general]').disabled = !!clash.length || state.busy;
+    return !clash.length;
+}
+// ---- permission + date settings (same rules as daris/general_cleaning.py) ----
+const GM_NEG = /(do\s*not|don'?t|opt\s*out|optout|unsub|block|exclude|suppress|\bno\s*(sms|text|e?mail|post|letter|call|phone)\b|\bdnc\b)/i;
+function gmSuggest(header, samples) {
+    const h = String(header || '').replace(/[_\-.]+/g, ' ');
+    const neg = GM_NEG.test(h), vals = (samples || []).filter(Boolean);
+    const dateish = /(date|time|when|\bat$|\bon$)/i.test(h) || (vals.length > 0 && vals.every(s => /^(\{\s*ts|\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})/i.test(String(s))));
+    return { meaning: dateish ? (neg ? 'filled_blocked' : 'filled_allowed') : (neg ? 'blocked' : 'allowed'), blank: 'no' };
+}
+const GM_OUT = { do_not_sms: 'CONTACT_ALLOW_CONTACT_VIA_TEXT', do_not_email: 'CONTACT_ALLOW_CONTACT_VIA_EMAIL', do_not_mail: 'CONTACT_ALLOW_CONTACT_VIA_LETTER',
+    do_not_call: 'CONTACT_ALLOW_CONTACT_VIA_PHONE', subscribed: 'CONTACT_UNSUBSCRIBE_FROM_MARKETING' };
+function gmMeanings(role) {
+    return role === 'subscribed'
+        ? { allowed: '1 / Yes = subscribed', blocked: '1 / Yes = unsubscribed', filled_blocked: 'Filled in (e.g. an unsubscribe date) = unsubscribed', filled_allowed: 'Filled in = subscribed' }
+        : { allowed: '1 / Yes = allowed', blocked: '1 / Yes = do not contact', filled_blocked: 'Filled in (e.g. an opt-out date) = do not contact', filled_allowed: 'Filled in (e.g. an opt-in date) = allowed' };
+}
+const gmBlanks = role => role === 'subscribed' ? { no: 'Empty = unsubscribed', yes: 'Empty = subscribed', empty: 'Empty = leave empty' } : { no: 'Empty = not allowed', yes: 'Empty = allowed', empty: 'Empty = leave empty' };
+/** TRUE / FALSE / empty counts for a setting, from the column's yes / no / empty / other counts. */
+function gmCounts(m, k) {
+    const filled = k.yes + k.no + k.other;
+    let allow = 0, deny = 0, empty = 0;
+    if (m.meaning === 'filled_blocked') { allow = k.empty; deny = filled; }
+    else if (m.meaning === 'filled_allowed') { allow = filled; deny = k.empty; }
+    else {
+        allow = m.meaning === 'allowed' ? k.yes : k.no; deny = (m.meaning === 'allowed' ? k.no : k.yes) + k.other;
+        if (m.blank === 'yes') allow += k.empty; else if (m.blank === 'no') deny += k.empty; else empty = k.empty;
+    }
+    return { allow, deny, empty, odd: ['allowed', 'blocked'].includes(m.meaning) ? k.other : 0 };
+}
+function gmOpt(key, role, column) {
+    const g = state.generalModes[key], col = column && (state.generalCols[key] || {})[column];
+    if (!g || !col) return '';
+    const sel = (attr, obj, cur) => `<select ${attr}="${esc(role)}" class="bg-transparent border px-2 py-1 text-[12px] text-white outline-none" style="border-color: var(--line); background:#06121d;">${Object.entries(obj).map(([v, l]) => `<option value="${v}"${v === cur ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+    const box = (inner) => `<div class="flex flex-wrap items-center gap-x-3 gap-y-1.5 mt-1 mb-1 px-3 py-2 text-[12px] text-slate-400" style="border-left: 2px solid #5EE7FF; background: rgba(94,231,255,0.04);">${inner}</div>`;
+    if (g.flagRoles.includes(role)) {
+        if (!g.flag[role] || g.flag[role].col !== column) g.flag[role] = { ...gmSuggest(column, col.samples), col: column, guessed: true };
+        const m = g.flag[role], n = gmCounts(m, col.flags || { yes: 0, no: 0, empty: 0, other: 0 }), sub = role === 'subscribed';
+        const t = sub ? n.deny : n.allow, f = sub ? n.allow : n.deny;      // UNSUBSCRIBE is TRUE when not subscribed
+        return box(`<span>This column's values mean</span>${sel('data-gm-meaning', gmMeanings(role), m.meaning)}
+            ${['allowed', 'blocked'].includes(m.meaning) ? sel('data-gm-blank', gmBlanks(role), m.blank) : ''}
+            ${m.guessed ? '<span class="chip !text-ok !py-0" style="border-color: rgba(61,255,176,0.35);" title="DARIS guessed this from the column name and values - check it">GUESSED</span>' : ''}
+            <span class="font-mono text-[11.5px] text-slate-200">→ ${GM_OUT[role]}: <span class="text-ok">${fmt(t)} TRUE</span>${sub ? ' (unsubscribed)' : ''} · <span class="text-alert">${fmt(f)} FALSE</span>${sub ? ' (subscribed)' : ''}${n.empty ? ` · ${fmt(n.empty)} empty` : ''}${n.odd ? ` · <span class="text-alert">${fmt(n.odd)} not yes/no (treated as not allowed)</span>` : ''}${g.contactable ? ` · <span class="text-holo">blank cells where ${esc(g.contactable)} = 1 become allowed</span>` : ''}</span>`);
+    }
+    if (role === 'contactable') {
+        const k = col.flags || { yes: 0, no: 0, empty: 0, other: 0 }, total = k.yes + k.no + k.empty + k.other;
+        return box(`<span>When a permission's own cell is blank and this is 1 / Yes, the permission becomes allowed (CONTACT_ALLOW_CONTACT_VIA_… TRUE, CONTACT_UNSUBSCRIBE_FROM_MARKETING FALSE). Permissions not in the export are filled too.</span>
+            <span class="font-mono text-[11.5px] text-slate-200">→ <span class="text-ok">${fmt(k.yes)}</span> of ${fmt(total)} rows are contactable</span>`);
+    }
+    if (g.dateRoles.includes(role)) {
+        const mode = g.date[role] || 'date', d = col.dates;
+        return box(`<span>Format</span>${sel('data-gm-date', g.dateModes, mode)}
+            ${d ? `<span class="font-mono text-[11.5px] text-slate-200">${esc(d.sample)} → <span class="text-ok">${esc(d[mode])}</span>${d.unreadable ? ` · <span class="text-alert">${fmt(d.unreadable)} can't be read as dates (left as they are)</span>` : ''}</span>` : '<span class="text-slate-500">The first values in this column aren\'t dates.</span>'}`);
+    }
+    return '';
+}
+function gmRefresh(box, role) {
+    const el = box.querySelector(`[data-opt="${role}"]`);
+    if (el) el.innerHTML = gmOpt(box.dataset.key, role, box.querySelector(`.gm-select[data-role="${role}"]`).value);
+}
+document.addEventListener('change', e => {
+    const t = e.target, box = t.closest('[data-general]');
+    if (!box) return;
+    const g = state.generalModes[box.dataset.key];
+    if (t.dataset.gmMeaning) { const r = t.dataset.gmMeaning; g.flag[r] = { ...g.flag[r], meaning: t.value, guessed: false }; gmRefresh(box, r); }
+    else if (t.dataset.gmBlank) { const r = t.dataset.gmBlank; g.flag[r] = { ...g.flag[r], blank: t.value, guessed: false }; gmRefresh(box, r); }
+    else if (t.dataset.gmDate) { const r = t.dataset.gmDate; g.date[r] = t.value; gmRefresh(box, r); }
+});
+
+function generalChanged(sel) {
+    const box = sel.closest('[data-general]');
+    delete sel.dataset.ai;                                  // the user decided: no longer an AI guess
+    sel.closest('div.grid').querySelector('.gm-how')?.remove();
+    const col = (state.generalCols[box.dataset.key] || {})[sel.value];
+    const pv = sel.closest('div.grid').querySelector('.gm-preview');
+    pv.innerHTML = col ? `<span class="text-slate-400">${col.samples.map(esc).join(' <span class="text-slate-600">·</span> ') || '<span class="text-slate-600">(empty)</span>'}</span>
+        <span class="code !tracking-normal ml-1">${fmt(col.filled)} filled</span>` : '';
+    gmRefresh(box, sel.dataset.role);
+    if (sel.dataset.role === 'contactable') {
+        state.generalModes[box.dataset.key].contactable = sel.value;
+        state.generalModes[box.dataset.key].flagRoles.forEach(r => gmRefresh(box, r));
+    }
+    generalCheck(box);
+}
+async function runGeneral(btn) {
+    const box = btn.closest('[data-general]');
+    if (state.busy || !generalCheck(box)) return;
+    if (!state.sid) return toast('Session expired — upload the file again.', 'error');
+    const mapping = Object.fromEntries([...box.querySelectorAll('.gm-select')].map(x => [x.dataset.role, x.value]));
+    const tag = box.querySelector('.gm-tag').value.trim();
+    const mapped = Object.values(mapping).filter(Boolean).length;
+    addMessage('user', `Run ${box.dataset.title} on ${box.dataset.file} — ${mapped} columns mapped, ID tag ${tag || '(none)'}`);
+    const msg = addMessage('assistant', '');
+    await streamInto(msg, `/api/daris/session/${state.sid}/general-clean`, {
+        file: box.dataset.file, sheet: box.dataset.sheet, mapping, id_tag: tag, profile: box.dataset.profile,
+        flag_modes: Object.fromEntries(Object.entries((state.generalModes[box.dataset.key] || {}).flag || {}).filter(([r]) => mapping[r]).map(([r, m]) => [r, { meaning: m.meaning, blank: m.blank }])),
+        date_modes: { ...((state.generalModes[box.dataset.key] || {}).date || {}) },
+        remember: box.querySelector('.gm-remember').checked,
+    });
+}
+
+async function acceptMapping(btn) {
+    btn.disabled = true;
+    try {
+        const d = await api('/api/daris/learn', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ header: btn.dataset.accept, target: btn.dataset.target }) });
+        btn.outerHTML = '<span class="font-hud text-[11px] font-semibold tracking-[0.14em] text-ok">◆ LEARNED</span>';
+        toast(d.message + ' Merge again to apply it.');
+        loadStatus();
+    } catch (e) { btn.disabled = false; toast(e.message, 'error'); }
+}
+
+/* ---------------- voice ---------------- */
+function speak(text) {
+    if (!('speechSynthesis' in window)) return;
+    const plain = text.replace(/[*`#⚠]/g, '').replace(/^\s*-\s+/gm, '').slice(0, 900);
+    const u = new SpeechSynthesisUtterance(plain);
+    const voices = speechSynthesis.getVoices();
+    u.voice = voices.find(v => /en-GB/i.test(v.lang) && /male|ryan|george|david/i.test(v.name))
+        || voices.find(v => /en-AU/i.test(v.lang)) || voices.find(v => /en-GB/i.test(v.lang)) || voices.find(v => /^en/i.test(v.lang)) || null;
+    u.rate = 1.02;
+    speechSynthesis.cancel(); speechSynthesis.speak(u);
+}
+const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recog = null;
+function setListening(on) {
+    $('listening').classList.toggle('hidden', !on); $('listening').classList.toggle('flex', on);
+    $('micBtn').classList.toggle('text-alert', on);
+    $('brandCore').classList.toggle('listen', on);
+}
+function toggleMic() {
+    if (!Recognition) return toast('Voice input needs Chrome or Edge.', 'error');
+    if (recog) { recog.stop(); return; }
+    recog = new Recognition(); recog.lang = 'en-AU'; recog.interimResults = true; recog.continuous = false;
+    const base = $('input').value ? $('input').value + ' ' : '';
+    let finalText = '';
+    recog.onresult = e => {
+        let interim = '';
+        for (const r of e.results) (r.isFinal ? (finalText = r[0].transcript) : (interim += r[0].transcript));
+        $('input').value = base + (finalText || interim); autosize();
+    };
+    recog.onend = () => { setListening(false); recog = null; if (finalText) send(); };
+    recog.onerror = e => toast(`Voice input stopped: ${e.error}`, 'error');
+    setListening(true);
+    recog.start();
+}
+
+/* ---------------- settings ---------------- */
+const PROVIDERS = {
+    local:  { name: 'Local AI', sub: 'OLLAMA ON THIS PC', note: 'Free · private · slower answers', ok: true },
+    claude: { name: 'Claude', sub: 'ANTHROPIC API', note: 'Cloud · most capable · paid per use' },
+    openai: { name: 'ChatGPT', sub: 'OPENAI API', note: 'Cloud · paid per use' },
+};
+const CLAUDE_MODELS = [
+    ['claude-opus-5-5', 'Opus 5.5 — most capable · $4 in / $20 out per million tokens'],
+    ['claude-sonnet-5-5', 'Sonnet 5.5 — fast and strong · $2 / $10'],
+    ['claude-haiku-5-5', 'Haiku 5.5 — cheapest · $0.10 / $0.50'],
+];
+let cfg = null, cfgMeta = null, cfgProvider = 'local';
+
+async function openSettings() {
+    try {
+        cfgMeta = await api('/api/daris/settings');
+        cfg = cfgMeta.settings; cfgProvider = cfg.provider;
+    } catch (e) { return toast(e.message, 'error'); }
+    $('optSamples').checked = !!cfg.send_samples_to_cloud;
+    $('optAutoApply').checked = !!cfg.auto_apply_ai_mappings;
+    $('settingsResult').classList.add('hidden');
+    renderSettings();
+    $('settingsModal').classList.remove('hidden'); $('settingsModal').classList.add('flex');
+}
+function closeSettings() { $('settingsModal').classList.add('hidden'); $('settingsModal').classList.remove('flex'); }
+
+function renderSettings() {
+    $('providerCards').innerHTML = Object.entries(PROVIDERS).map(([k, p]) => {
+        const on = k === cfgProvider;
+        return `<button data-provider="${k}" class="text-left p-3 border transition-colors ${on ? 'bg-holo/[0.07]' : 'hover:bg-white/[0.03]'}" style="border-color:${on ? 'rgba(94,231,255,0.6)' : 'var(--line)'}">
+            <div class="flex items-center gap-2"><span class="w-2 h-2 ${on ? 'bg-holo shadow-[0_0_8px_#5EE7FF]' : 'bg-slate-700'}"></span>
+            <span class="font-hud text-[16px] font-semibold tracking-wide text-white">${p.name}</span></div>
+            <div class="code mt-1">${p.sub}</div><div class="text-[11.5px] mt-2 ${p.ok ? 'text-ok/80' : 'text-arc/90'}">${p.note}</div></button>`;
+    }).join('');
+    const field = 'mt-1 w-full bg-transparent border px-3 py-2 text-[13px] text-slate-100 outline-none focus:border-holo/60';
+    const f = $('providerFields');
+    if (cfgProvider === 'local') {
+        const models = cfgMeta.local_models?.length ? cfgMeta.local_models : [cfg.local_model];
+        f.innerHTML = `<label class="block"><span class="code">LOCAL MODEL</span>
+            <select id="cfgLocalModel" class="${field}" style="border-color: var(--line)">
+            ${models.map(m => `<option class="bg-[#050f19]" ${m === cfg.local_model ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></label>
+            <div class="text-[12px] ${cfgMeta.ollama_online ? 'text-slate-500' : 'text-alert'}">${cfgMeta.ollama_online
+                ? `Ollama is running · ${models.length} model(s) installed. Add more with <code class="text-holo">ollama pull &lt;model&gt;</code>.`
+                : 'Ollama is not running — start it from the Windows Start menu.'}</div>`;
+    } else {
+        const claude = cfgProvider === 'claude';
+        const key = claude ? cfg.claude_key : cfg.openai_key;
+        const pkg = claude ? 'anthropic' : 'openai';
+        const envName = claude ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY';
+        const models = claude ? CLAUDE_MODELS : [['gpt-5-mini', ''], ['gpt-5', '']];
+        f.innerHTML = `
+            ${cfgMeta.sdk?.[cfgProvider] ? '' : `<div class="text-[12.5px] text-alert">The <code>${pkg}</code> package isn't installed — run <code class="text-holo">pip install ${pkg}</code> and restart the API.</div>`}
+            <label class="block"><span class="code">MODEL</span>
+                <input id="cfgModel" list="cfgModelList" spellcheck="false" value="${esc(claude ? cfg.claude_model : cfg.openai_model)}" class="${field} font-mono" style="border-color: var(--line)">
+                <datalist id="cfgModelList">${models.map(([m, d]) => `<option value="${m}">${esc(d)}</option>`).join('')}</datalist></label>
+            <div class="text-[12px] text-slate-500 space-y-0.5">${claude
+                ? CLAUDE_MODELS.map(([m, d]) => `<div><code class="text-holo">${m}</code> · ${esc(d.split('—')[1].trim())}</div>`).join('')
+                : 'Type the model name your OpenAI account uses — names change often.'}</div>
+            <label class="block"><span class="code">API KEY</span>
+                <input id="cfgKey" type="password" autocomplete="off" spellcheck="false" placeholder="${key.set ? 'Leave blank to keep the current key' : (claude ? 'sk-ant-…' : 'sk-…')}" class="${field} font-mono" style="border-color: var(--line)"></label>
+            <div class="flex flex-wrap items-center gap-3 text-[12px]">
+                <span class="${key.set ? 'text-ok' : 'text-arc'}">${key.set ? `◆ Key ${key.source === 'environment' ? `from ${envName}` : 'saved'} (${esc(key.hint)})` : '◇ No key yet'}</span>
+                ${key.set && key.source === 'saved' ? '<button id="cfgClearKey" class="text-slate-500 hover:text-alert underline">Remove saved key</button>' : ''}
+            </div>
+            <div class="text-[11.5px] text-slate-500">Saved only on this PC in <code>daris/daris_settings.json</code> (kept out of git), or set ${envName} instead. Get a key at ${claude ? 'console.anthropic.com' : 'platform.openai.com'}.</div>`;
+    }
+    $('cloudPrivacy').classList.toggle('hidden', cfgProvider === 'local');
+}
+
+function settingsPayload() {
+    const p = { provider: cfgProvider, send_samples_to_cloud: $('optSamples').checked,
+                auto_apply_ai_mappings: $('optAutoApply').checked };
+    if (cfgProvider === 'local') {
+        p.local_model = $('cfgLocalModel')?.value;
+    } else {
+        p[`${cfgProvider}_model`] = $('cfgModel').value.trim();
+        const key = $('cfgKey').value.trim();
+        if (key) p[`${cfgProvider}_api_key`] = key;
+    }
+    return p;
+}
+
+function settingsResult(text, tone) {
+    const r = $('settingsResult');
+    r.classList.remove('hidden');
+    r.className = 'text-[13px] px-3 py-2 border ' + (tone === 'error' ? 'text-red-200 border-alert/50' : tone === 'ok' ? 'text-ok border-ok/40' : 'text-slate-300');
+    r.style.borderColor = tone ? '' : 'var(--line)';
+    r.textContent = text;
+}
+
+async function saveSettings(keepOpen = false) {
+    // Real client data leaving the PC needs an explicit yes
+    if (cfgProvider !== 'local' && $('optSamples').checked && !cfg.send_samples_to_cloud &&
+        !confirm(`Send REAL client values (names, phones, emails) to ${PROVIDERS[cfgProvider].name}? You can switch this off again at any time.`)) {
+        $('optSamples').checked = false;
+    }
+    const d = await api('/api/daris/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                 body: JSON.stringify(settingsPayload()) });
+    cfg = d.settings;
+    renderSettings();
+    await loadStatus();
+    if (!keepOpen) { closeSettings(); toast(`AI engine: ${PROVIDERS[cfg.provider].name}.`); }
+}
+
+async function testSettings() {
+    settingsResult('Saving and testing…');
+    try {
+        await saveSettings(true);
+        const d = await api('/api/daris/settings/test', { method: 'POST' });
+        settingsResult(d.message, d.status === 'success' ? 'ok' : 'error');
+    } catch (e) { settingsResult(e.message, 'error'); }
+}
+
+async function clearKey() {
+    try {
+        await api('/api/daris/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                           body: JSON.stringify({ [`${cfgProvider}_api_key`]: '__clear__' }) });
+        const provider = cfgProvider;
+        await openSettings(); cfgProvider = provider; renderSettings();
+        settingsResult('Saved key removed.', 'ok');
+    } catch (e) { settingsResult(e.message, 'error'); }
+}
+
+/* ---------------- wiring ---------------- */
+$('settingsBtn').addEventListener('click', openSettings);
+$('settingsClose').addEventListener('click', closeSettings);
+$('settingsSave').addEventListener('click', () => saveSettings().catch(e => settingsResult(e.message, 'error')));
+$('settingsTest').addEventListener('click', testSettings);
+$('settingsModal').addEventListener('click', e => {
+    if (e.target === $('settingsModal')) return closeSettings();
+    const p = e.target.closest('[data-provider]'); if (p) { cfgProvider = p.dataset.provider; renderSettings(); }
+    if (e.target.closest('#cfgClearKey')) clearKey();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('settingsModal').classList.contains('hidden')) closeSettings(); });
+function autosize() { const t = $('input'); t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 160) + 'px'; }
+$('input').addEventListener('input', autosize);
+$('input').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+$('sendBtn').addEventListener('click', () => send());
+$('micBtn').addEventListener('click', toggleMic);
+$('voiceBtn').addEventListener('click', () => {
+    state.speak = !state.speak; store.set('daris_speak', state.speak);
+    $('voiceBtn').classList.toggle('text-holo', state.speak);
+    if (!state.speak && 'speechSynthesis' in window) speechSynthesis.cancel();
+    toast(state.speak ? 'Voice replies on — DARIS will read answers aloud.' : 'Voice replies off.');
+});
+$('fileInput').addEventListener('change', e => { uploadFiles(e.target.files); e.target.value = ''; });
+$('composerFile').addEventListener('change', e => { uploadFiles(e.target.files); e.target.value = ''; });
+$('menuBtn').addEventListener('click', () => $('sidebar').classList.toggle('max-lg:hidden'));
+$('newChatBtn').addEventListener('click', async () => {
+    if (state.busy) return;
+    store.del('daris_transcript'); $('messages').innerHTML = '';
+    $('messages').classList.add('hidden'); $('welcome').classList.remove('hidden');
+    renderTelemetryEmpty();
+    await ensureSession(true);
+});
+document.addEventListener('click', e => {
+    const q = e.target.closest('.quick'); if (q && !state.busy) return send(q.dataset.prompt);
+    const rm = e.target.closest('[data-remove]'); if (rm) return removeFile(rm.dataset.remove);
+    const acc = e.target.closest('[data-accept]'); if (acc) return acceptMapping(acc);
+    const run = e.target.closest('[data-run-general]'); if (run) return runGeneral(run);
+});
+document.addEventListener('change', e => { if (e.target.matches('.gm-select')) generalChanged(e.target); });
+document.addEventListener('input', e => {
+    if (!e.target.matches('.gm-tag')) return;
+    const ex = e.target.closest('[data-general]').querySelector('.gm-example');
+    ex.textContent = '1' + (e.target.value.trim() ? '_' + e.target.value.trim() : '');
+});
+let dragDepth = 0;
+// 'invisible' as well as opacity: a transparent element still blurs what's behind it
+const showDrop = on => ['opacity-0', 'invisible'].forEach(c => $('dropOverlay').classList.toggle(c, !on));
+window.addEventListener('dragenter', e => { if (!e.dataTransfer?.types?.includes('Files')) return; e.preventDefault(); dragDepth++; showDrop(true); });
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; showDrop(false); } });
+window.addEventListener('drop', e => { e.preventDefault(); dragDepth = 0; showDrop(false); if (e.dataTransfer?.files?.length) uploadFiles(e.dataTransfer.files); });
+
+function tick() { $('clock').textContent = new Date().toLocaleTimeString('en-AU', { hour12: false }); }
+
+(async function init() {
+    mountCores();
+    tick(); setInterval(tick, 1000);
+    const h = new Date().getHours();
+    $('greeting').textContent = (h < 12 ? 'Good morning.' : h < 18 ? 'Good afternoon.' : 'Good evening.');
+    state.speak = !!store.get('daris_speak');
+    if (state.speak) $('voiceBtn').classList.add('text-holo');
+    renderTelemetryEmpty();
+    const statusPromise = loadStatus();
+    runBoot(statusPromise);
+    try { await ensureSession(); restoreTranscript(); }
+    catch (_) { toast('Engine offline — start the API (python -m uvicorn main:app --port 8000).', 'error'); }
+    $('input').focus();
+})();
+</script>
+</body>
+</html>

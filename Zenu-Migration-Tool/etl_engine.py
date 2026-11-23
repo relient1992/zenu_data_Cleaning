@@ -13,12 +13,21 @@ from crm_vaultre import VaultREProcessor
 from crm_zenu import ZenuProcessor
 from crm_rex import RexProcessor
 
+# Previous-export tables are loaded under this prefix so a top-up run can diff
+# the new export against them. Normal (full) runs never create these tables.
+BASELINE_PREFIX = "__baseline__"
+BASELINE_DIRNAME = "_baseline"
+
+
 class MigrationEngine:
-    def __init__(self, job_id, workspace, source_crm="Agentbox", chunk_size=500000):
+    def __init__(self, job_id, workspace, source_crm="Agentbox", chunk_size=500000, top_up=False):
         self.job_id = job_id
         self.workspace = workspace
         self.source_crm = source_crm
         self.chunk_size = chunk_size
+        self.top_up = bool(top_up)
+        self.baseline_prefix = BASELINE_PREFIX
+        self.baseline_dir = os.path.join(self.workspace, BASELINE_DIRNAME)
         self.db_path = os.path.join(self.workspace, f"{job_id}_raw_data.db")
         self.log_path = os.path.join(self.workspace, "process.log")
         self.progress_path = os.path.join(self.workspace, "progress.json")
@@ -67,46 +76,74 @@ class MigrationEngine:
                 "Loading source data",
                 f"{file} ({file_idx + 1}/{total_files})"
             )
-            table_name = file
-            file_path = os.path.join(self.workspace, file)
-            chunksize = 50000
-            
-            encodings = ['utf-8-sig', 'cp1252', 'latin1']
-            loaded = False
-            
-            for enc in encodings:
-                if loaded: break
-                try:
-                    cursor = self.conn.cursor()
-                    cursor.execute(f'DROP TABLE IF EXISTS "{table_name}"')
-                    self.conn.commit()
+            self._load_one_csv(os.path.join(self.workspace, file), file, label=file)
 
-                    for chunk in pd.read_csv(file_path, chunksize=chunksize, low_memory=False, encoding=enc, on_bad_lines='skip'):
-                        chunk.to_sql(table_name, self.conn, if_exists='append', index=False)
-                    
-                    self.log(f"[{self.job_id}] Loaded {file} successfully using '{enc}' encoding.")
-                    loaded = True
-                except Exception as e:
-                    error_msg = str(e).lower()
-                    if "codec can't decode" in error_msg or "utf-8" in error_msg or "encoding" in error_msg:
-                        self.log(f"[{self.job_id}] '{enc}' encoding failed for {file}. Trying next...")
-                    else:
-                        self.log(f"[{self.job_id}] Warning: Could not load {file} - {e}")
-                        break
-                        
-            if not loaded:
-                self.log(f"[{self.job_id}] All strict encodings failed. Forcing load with error replacement for {file}...")
-                try:
-                    cursor = self.conn.cursor()
-                    cursor.execute(f'DROP TABLE IF EXISTS "{table_name}"')
-                    self.conn.commit()
-                    for chunk in pd.read_csv(file_path, chunksize=chunksize, low_memory=False, encoding='utf-8', on_bad_lines='skip', encoding_errors='replace'):
-                        chunk.to_sql(table_name, self.conn, if_exists='append', index=False)
-                    self.log(f"[{self.job_id}] Loaded {file} successfully using fallback replacement mode.")
-                except Exception as e:
-                    self.log(f"[{self.job_id}] CRITICAL: Completely failed to load {file}. Error: {e}")
-
+        self._load_baseline_csvs()
         self.set_progress(40, "Source data loaded", f"{total_files} file(s) indexed")
+
+    def _load_one_csv(self, file_path, table_name, label=None):
+        """Load a single CSV into SQLite, trying each encoding in turn."""
+        label = label or table_name
+        chunksize = 50000
+
+        encodings = ['utf-8-sig', 'cp1252', 'latin1']
+        loaded = False
+
+        for enc in encodings:
+            if loaded: break
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute(f'DROP TABLE IF EXISTS "{table_name}"')
+                self.conn.commit()
+
+                for chunk in pd.read_csv(file_path, chunksize=chunksize, low_memory=False, encoding=enc, on_bad_lines='skip'):
+                    chunk.to_sql(table_name, self.conn, if_exists='append', index=False)
+
+                self.log(f"[{self.job_id}] Loaded {label} successfully using '{enc}' encoding.")
+                loaded = True
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "codec can't decode" in error_msg or "utf-8" in error_msg or "encoding" in error_msg:
+                    self.log(f"[{self.job_id}] '{enc}' encoding failed for {label}. Trying next...")
+                else:
+                    self.log(f"[{self.job_id}] Warning: Could not load {label} - {e}")
+                    break
+
+        if not loaded:
+            self.log(f"[{self.job_id}] All strict encodings failed. Forcing load with error replacement for {label}...")
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute(f'DROP TABLE IF EXISTS "{table_name}"')
+                self.conn.commit()
+                for chunk in pd.read_csv(file_path, chunksize=chunksize, low_memory=False, encoding='utf-8', on_bad_lines='skip', encoding_errors='replace'):
+                    chunk.to_sql(table_name, self.conn, if_exists='append', index=False)
+                self.log(f"[{self.job_id}] Loaded {label} successfully using fallback replacement mode.")
+            except Exception as e:
+                self.log(f"[{self.job_id}] CRITICAL: Completely failed to load {label}. Error: {e}")
+
+    def _load_baseline_csvs(self):
+        """
+        Top-up only: load the PREVIOUS export's CSVs under a prefixed table name
+        so each processor can work out which rows are new. Never touches the
+        tables a normal run reads.
+        """
+        if not self.top_up:
+            return
+        if not os.path.isdir(self.baseline_dir):
+            self.log(f"[{self.job_id}] TOP-UP WARNING: no previous-export folder was supplied "
+                     f"({BASELINE_DIRNAME}/). Every row would count as new - aborting the delta.")
+            return
+
+        baseline_files = sorted(f for f in os.listdir(self.baseline_dir) if f.endswith('.csv'))
+        if not baseline_files:
+            self.log(f"[{self.job_id}] TOP-UP WARNING: previous-export folder is empty.")
+            return
+
+        self.log(f"[{self.job_id}] TOP-UP: loading {len(baseline_files)} previous-export file(s) for comparison...")
+        for file in baseline_files:
+            self._load_one_csv(os.path.join(self.baseline_dir, file),
+                               f"{BASELINE_PREFIX}{file}",
+                               label=f"[previous] {file}")
 
     def run_mapping(self, mapping_json_path):
         self.log(f"[{self.job_id}] Reading JSON Mapping Rules...")

@@ -38,6 +38,25 @@ class RexProcessor:
     ENQUIRY_STATUS_MAP = {'approved': 'Completed', 'trashed': 'Cancelled'}
     INTEREST_MAP = {'hot': 'YES', 'warm': 'MAYBE', 'cold': 'NO'}
 
+    # ---- Top-up: what identifies a row as "already migrated" -------------
+    # Link tables have no surrogate key, so they are keyed on the pair of
+    # foreign keys. Anything not listed falls back to 'id', then to every
+    # *_id column.
+    DELTA_KEYS = {
+        'contact_relationships.csv': ['id'],
+        'match_profiles.csv': ['id'],
+        'appraisals.csv': ['id'],
+        'properties.csv': ['id'],
+        'contact_reln_property.csv': ['id'],
+        'reminders.csv': ['id'],
+        'feedback.csv': ['id'],
+        'note_contacts.csv': ['note_id', 'contact_id'],
+        'note_properties.csv': ['note_id', 'property_id'],
+        'feedback_contacts.csv': ['feedback_id', 'contact_id'],
+        'listing_contract_purchtenants.csv': ['contract_id', 'purchtenant_id'],
+        'contact_reln_listings.csv': ['contact_id', 'listing_id'],
+    }
+
     def __init__(self, engine):
         self.engine = engine
         self.conn = engine.conn
@@ -126,6 +145,87 @@ class RexProcessor:
             return pd.DataFrame()
         df['_key'] = self._clean_id(df[key])
         return df.drop_duplicates('_key').set_index('_key')
+
+    # ==================================================================
+    # Top-up (delta) support
+    #
+    # A top-up run emits only rows that did not exist in the client's
+    # PREVIOUS export. Two rules make that safe:
+    #   * only a group's BASE table (the one that drives output rows) is
+    #     filtered - read it with _read_base()
+    #   * every LOOKUP table stays complete - keep using _read_table(), so
+    #     a new note on a property appraised last year still resolves to
+    #     Appr_<id> instead of falling back to a raw id.
+    # ==================================================================
+    def _is_top_up(self):
+        return bool(getattr(self.engine, 'top_up', False))
+
+    def _baseline_prefix(self):
+        return getattr(self.engine, 'baseline_prefix', '__baseline__')
+
+    def _read_baseline_table(self, wanted):
+        """The previous export's copy of this file, or None if it wasn't supplied."""
+        prefix = self._baseline_prefix().strip().lower()
+        target = str(wanted).strip().lower().replace(',csv', '.csv')
+        for t in self._tables():
+            tl = t.strip().lower()
+            if tl.startswith(prefix) and tl[len(prefix):] == target:
+                try:
+                    df = pd.read_sql_query(f'SELECT * FROM "{t}"', self.conn)
+                    df.columns = df.columns.str.strip().str.lower()
+                    return df
+                except Exception as e:
+                    self.log(f"[{self.job_id}] TOP-UP: could not read previous {wanted} - {e}")
+                    return None
+        return None
+
+    def _delta_key_cols(self, df, wanted):
+        """Which columns identify a row for 'have we seen this before?'."""
+        target = str(wanted).strip().lower().replace(',csv', '.csv')
+        preferred = self.DELTA_KEYS.get(target)
+        if preferred and all(c in df.columns for c in preferred):
+            return preferred
+        if 'id' in df.columns:
+            return ['id']
+        # link tables without a surrogate key: the pair of foreign keys
+        fks = [c for c in df.columns if c.endswith('_id')]
+        return fks or None
+
+    def _row_keys(self, df, keys):
+        parts = [self._clean_id(df[k]) for k in keys]
+        out = parts[0]
+        for p in parts[1:]:
+            out = out + '||' + p
+        return out
+
+    def _read_base(self, wanted):
+        """
+        Read a group's BASE table. On a full run this is just _read_table().
+        On a top-up run it returns only the rows that are new since the
+        previous export.
+        """
+        df = self._read_table(wanted)
+        if df.empty or not self._is_top_up():
+            return df
+
+        prev = self._read_baseline_table(wanted)
+        if prev is None:
+            self.log(f"[{self.job_id}] TOP-UP: no previous copy of {wanted} - "
+                     f"treating all {len(df)} row(s) as new.")
+            return df
+
+        keys = self._delta_key_cols(df, wanted)
+        if not keys or not all(c in prev.columns for c in keys):
+            self.log(f"[{self.job_id}] TOP-UP WARNING: cannot key {wanted} "
+                     f"(tried {keys}) - keeping all {len(df)} row(s).")
+            return df
+
+        seen = set(self._row_keys(prev, keys))
+        is_new = ~self._row_keys(df, keys).isin(seen)
+        kept = df[is_new]
+        self.log(f"[{self.job_id}] TOP-UP {wanted}: {len(kept)} new of {len(df)} "
+                 f"({len(df) - len(kept)} already migrated, key={'+'.join(keys)}).")
+        return kept
 
     @staticmethod
     def _clean_id(series):
@@ -261,6 +361,23 @@ class RexProcessor:
     def _build_global_dictionaries(self):
         if self.dicts_loaded:
             return
+
+        if self._is_top_up():
+            prefix = self._baseline_prefix().strip().lower()
+            prev_tables = sorted(t[len(prefix):] for t in self._tables()
+                                 if t.strip().lower().startswith(prefix))
+            self.log(f"[{self.job_id}] === TOP-UP RUN: emitting only records new since "
+                     f"the previous export ===")
+            if prev_tables:
+                self.log(f"[{self.job_id}]   comparing against {len(prev_tables)} previous file(s): "
+                         f"{', '.join(prev_tables[:8])}"
+                         + (' ...' if len(prev_tables) > 8 else ''))
+            else:
+                self.log(f"[{self.job_id}]   WARNING: no previous-export files loaded. "
+                         f"Every record will look new - check the previous-export upload.")
+            self.log(f"[{self.job_id}]   contact_cleaned.csv and all lookup tables stay COMPLETE "
+                     f"so existing contacts/properties still resolve.")
+
         self.log(f"[{self.job_id}] Building Rex Global Cache Dictionaries...")
 
         self._load_contact_cleaned()
@@ -505,7 +622,7 @@ class RexProcessor:
     # 1. Contact Relationship
     # ==================================================================
     def _group_contact_relationship(self, rules):
-        base = self._read_table('contact_relationships.csv')
+        base = self._read_base('contact_relationships.csv')
         if base.empty:
             self.log(f"[{self.job_id}] Rex Contact Relationship: contact_relationships.csv not found.")
             return
@@ -537,7 +654,7 @@ class RexProcessor:
     # 2. Contact Requirement
     # ==================================================================
     def _group_contact_requirement(self, rules):
-        profiles = self._read_table('match_profiles.csv')
+        profiles = self._read_base('match_profiles.csv')
         if profiles.empty:
             self.log(f"[{self.job_id}] Rex Contact Requirement: match_profiles.csv not found.")
             return
@@ -640,7 +757,7 @@ class RexProcessor:
     # 3. Contact Notes
     # ==================================================================
     def _group_contact_notes(self, rules):
-        link = self._read_table('note_contacts.csv')
+        link = self._read_base('note_contacts.csv')
         if link.empty or self.notes_df.empty:
             self.log(f"[{self.job_id}] Rex Contact Notes: needs note_contacts.csv and notes.csv.")
             return
@@ -732,7 +849,7 @@ class RexProcessor:
     # 4. Appraisal
     # ==================================================================
     def _group_appraisal(self, rules):
-        appr = self._read_table('appraisals.csv')
+        appr = self._read_base('appraisals.csv')
         if appr.empty:
             self.log(f"[{self.job_id}] Rex Appraisal: appraisals.csv not found.")
             return
@@ -856,7 +973,7 @@ class RexProcessor:
     # 5. Prospect
     # ==================================================================
     def _group_prospect(self, rules):
-        props = self._read_table('properties.csv')
+        props = self._read_base('properties.csv')
         if props.empty:
             self.log(f"[{self.job_id}] Rex Prospect: properties.csv not found.")
             return
@@ -928,7 +1045,7 @@ class RexProcessor:
     # 6. Contact property Relationship
     # ==================================================================
     def _group_contact_property_relationship(self, rules):
-        base = self._read_table('contact_reln_property.csv')
+        base = self._read_base('contact_reln_property.csv')
         if base.empty:
             self.log(f"[{self.job_id}] Rex Contact property Relationship: contact_reln_property.csv not found.")
             return
@@ -972,7 +1089,7 @@ class RexProcessor:
     # 7. Tasks
     # ==================================================================
     def _group_tasks(self, rules):
-        base = self._read_table('reminders.csv')
+        base = self._read_base('reminders.csv')
         if base.empty:
             self.log(f"[{self.job_id}] Rex Tasks: reminders.csv not found.")
             return
@@ -1011,7 +1128,7 @@ class RexProcessor:
     # 8. Enquiries
     # ==================================================================
     def _group_enquiries(self, rules):
-        base = self._read_table('feedback.csv')
+        base = self._read_base('feedback.csv')
         if base.empty:
             self.log(f"[{self.job_id}] Rex Enquiries: feedback.csv not found.")
             return
@@ -1066,7 +1183,7 @@ class RexProcessor:
     # 9. Inspections
     # ==================================================================
     def _group_inspections(self, rules):
-        base = self._read_table('feedback_contacts.csv')
+        base = self._read_base('feedback_contacts.csv')
         if base.empty:
             self.log(f"[{self.job_id}] Rex Inspections: feedback_contacts.csv not found.")
             return
@@ -1157,7 +1274,7 @@ class RexProcessor:
     # ==================================================================
     def _group_offer(self, rules):
         """Offers only - rows whose feedback.feedback_type_id is 'offer'."""
-        base = self._read_table('feedback_contacts.csv')
+        base = self._read_base('feedback_contacts.csv')
         if base.empty:
             self.log(f"[{self.job_id}] Rex Offer: feedback_contacts.csv not found.")
             return
@@ -1216,7 +1333,7 @@ class RexProcessor:
     # 10. Buyer
     # ==================================================================
     def _group_buyer(self, rules):
-        base = self._read_table('listing_contract_purchtenants.csv')
+        base = self._read_base('listing_contract_purchtenants.csv')
         if base.empty:
             self.log(f"[{self.job_id}] Rex Buyer: listing_contract_purchtenants.csv not found.")
             return
@@ -1261,7 +1378,7 @@ class RexProcessor:
     # 11. Seller
     # ==================================================================
     def _group_seller(self, rules):
-        base = self._read_table('contact_reln_listings.csv')
+        base = self._read_base('contact_reln_listings.csv')
         if base.empty:
             self.log(f"[{self.job_id}] Rex Seller: contact_reln_listings.csv not found.")
             return
@@ -1300,7 +1417,7 @@ class RexProcessor:
         """Pull the note_ids listed in note_properties.csv out of notes.csv."""
         if self.property_notes_done:
             return
-        link = self._read_table('note_properties.csv')
+        link = self._read_base('note_properties.csv')
         if link.empty:
             return
         self.property_notes_done = True
@@ -1405,6 +1522,8 @@ class RexProcessor:
             return
 
         safe_group_name = str(group_name).replace(" ", "_").replace("/", "_")
+        if self._is_top_up():
+            safe_group_name += "_TopUp"
         chunk_limit = self.engine.chunk_size
         total_rows = len(df)
 
