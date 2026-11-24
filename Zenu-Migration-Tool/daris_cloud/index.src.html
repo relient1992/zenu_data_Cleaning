@@ -1277,6 +1277,21 @@ async function saveFile(filename, data) {
     throw new Error("The file couldn't be saved in this view.");
   }
 }
+/** Write a workbook Excel opens cleanly. Text can carry characters an .xlsx can't hold (a stray U+FFFE inside an REA
+ *  description, control codes, half emoji): Excel then "repairs" the file and empties that sheet. Drop them, and cut
+ *  any cell over Excel's 32,767-character limit. */
+const XL_BAD = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+function xlWrite(wb, opts) {
+  for (const ws of Object.values(wb.Sheets)) {
+    for (const [ref, cell] of Object.entries(ws)) {
+      if (ref[0] === "!" || !cell || typeof cell.v !== "string") continue;
+      let v = cell.v.replace(XL_BAD, "");
+      if (v.length > 32767) v = v.slice(0, 32767);
+      if (v !== cell.v) { cell.v = v; delete cell.w; delete cell.h; }
+    }
+  }
+  return XLSX.write(wb, Object.assign({ bookType: "xlsx", type: "array" }, opts));
+}
 async function exportWorkbook() {
   const r = S.result;
   if (!r) throw new Error("Run the cleaning first - there's nothing to export yet.");
@@ -1297,7 +1312,7 @@ async function exportWorkbook() {
   add("Checks", Object.entries(r.stats).map(([k, v]) => ({ Item: k, Value: String(v) })).concat([{ Item: "", Value: "" }, { Item: "ID date tag", Value: r.tag || "(none)" }, { Item: "Generated", Value: new Date().toLocaleString("en-AU") }]));
   add("Issues", r.issues.length ? r.issues.map(([s, d]) => ({ Severity: s, Detail: d })) : [{ Severity: "PASS", Detail: "No issues." }]);
   if (r.ruleLog && r.ruleLog.length) add("Changes", r.ruleLog.map((x, i) => ({ "#": i + 1, Column: x.column, Change: ruleText(x), "Cells changed": x.changed })));
-  const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+  const buf = xlWrite(wb);
   return saveFile(r.filename, new Blob([buf]));
 }
 
@@ -2127,7 +2142,7 @@ async function rmExport(filename) {
   }
   let name = String(filename || $("rmName")?.value || "").trim() || rmFileName();
   name = name.replace(/[\\/:*?"<>|]+/g, "_"); if (!/\.xlsx$/i.test(name)) name += ".xlsx";
-  const buf = XLSX.write(wb, { bookType: "xlsx", type: "array", compression: true });
+  const buf = xlWrite(wb, { compression: true });
   return saveFile(name, new Blob([buf]));
 }
 function resetRea() {
@@ -3304,7 +3319,7 @@ async function xpExport(filename) {
   const d = new Date(), p = (n) => String(n).padStart(2, "0");
   let name = String(filename || "").trim() || `DARVIS_Search_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
   name = name.replace(/[\\/:*?"<>|]+/g, "_"); if (!/\.xlsx$/i.test(name)) name += ".xlsx";
-  const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+  const buf = xlWrite(wb);
   return saveFile(name, new Blob([buf]));
 }
 /** "first name of 1001", "show contact 1001" against the Search & Export files - answered here, not sent to Claude. */
