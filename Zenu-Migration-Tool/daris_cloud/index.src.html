@@ -335,6 +335,7 @@ tr.gap td { text-align: center; color: var(--faint); font-size: 10.5px; letter-s
       <button class="tab" role="tab" id="tab-clean" data-view="clean" aria-selected="true">Contact cleaning</button>
       <button class="tab" role="tab" id="tab-migration" data-view="migration" aria-selected="false">Migration</button>
       <button class="tab" role="tab" id="tab-explore" data-view="explore" aria-selected="false">Search &amp; Export</button>
+      <button class="tab" role="tab" id="tab-rea" data-view="rea" aria-selected="false">REA Matching</button>
       <button class="tab" role="tab" id="tab-import-prep" data-view="import-prep" aria-selected="false">Import Prep</button>
       <button class="tab" role="tab" id="tab-roadmap" data-view="roadmap" aria-selected="false">Roadmap</button>
     </nav>
@@ -473,6 +474,48 @@ tr.gap td { text-align: center; color: var(--faint); font-size: 10.5px; letter-s
         <section class="work">
           <section class="panel" id="xpFind" aria-live="polite"></section>
           <section class="panel" id="xpResult" hidden></section>
+        </section>
+      </div>
+    </section>
+
+    <!-- ================= REA MATCHING (Agentbox REA feed vs the old CRM's listings) ================= -->
+    <section class="view" id="view-rea" role="tabpanel" aria-labelledby="tab-rea" hidden>
+      <div class="shell">
+        <aside class="rail">
+          <section class="panel" aria-labelledby="rmTitle">
+            <div class="panel-head"><span class="label" id="rmTitle">Input files</span><span class="code" id="rmCount">0 OF 5</span><button class="btn tiny danger" id="rmClear" type="button" hidden title="Remove the files and the result">Clear</button></div>
+            <label class="drop" id="rmDrop">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true" style="color:var(--holo)"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+              <strong>Load files</strong>
+              <span class="code">DROP FILES OR A FOLDER · CSV · XLSX · XLS</span>
+              <input id="rmFiles" type="file" accept=".csv,.xlsx,.xls" multiple>
+            </label>
+            <input id="rmFolder" type="file" webkitdirectory multiple hidden>
+            <input id="rmOne" type="file" accept=".csv,.xlsx,.xls" hidden>
+            <div class="row-btns"><button class="btn tiny" id="rmFolderBtn" type="button">Load a folder</button></div>
+            <p class="small" id="rmLoadMsg" style="margin:8px 0 0"></p>
+            <div class="files" id="rmSlots"></div>
+            <p class="small">Each file is recognised from its columns, so names don't matter. <strong>Choose</strong> sets one by hand. Files are read inside this page and never uploaded.</p>
+          </section>
+          <section class="panel" aria-labelledby="rmSetTitle">
+            <div class="panel-head"><span class="label" id="rmSetTitle">Settings</span></div>
+            <div class="field" style="margin-bottom:12px"><label class="code" for="rmClient">CLIENT NAME</label><input type="text" class="wide" id="rmClient" maxlength="60" placeholder="e.g. Mcconnell" autocomplete="off" style="width:100%">
+              <span class="small" style="margin:4px 0 0;display:block">Goes in the column names (Mcconnell Listing ID) and the file name.</span></div>
+            <div class="field" style="margin-bottom:12px"><label class="code" for="rmOffice">REA OFFICE ID (OPTIONAL)</label><input type="text" id="rmOffice" maxlength="20" placeholder="e.g. 1241" autocomplete="off">
+              <span class="small" style="margin:4px 0 0;display:block">Names the REA sheet (1241 REA data).</span></div>
+            <label class="toggle"><input type="checkbox" id="rmInputs" checked><span>Add the input files to the workbook as sheets (Contact ID, Listing Sale, Listing Lease, Properties, REA data)</span></label>
+          </section>
+        </aside>
+        <section class="work">
+          <section class="panel">
+            <div class="panel-head"><span class="label">REA matching</span><span class="code">AGENTBOX · MATCHED BY REA ID</span></div>
+            <div class="say"><p>Matches the office's <strong>REA listings</strong> to the old Agentbox listings by REA ID: REA <span class="mono">source_id</span> = Agentbox <span class="mono">rea_unique_id</span> (Listing Sale first, then Listing Lease). Writes <strong>Summary</strong>, <strong>Sold to Settled</strong>, <strong>Matched_By SourceID</strong> and <strong>Unable to match</strong>.</p>
+              <p>Appraisal and Property records in the REA data are out of scope. IDs saved as numbers and as text are matched alike (Excel's VLOOKUP misses those). <strong>Address Check</strong> flags matches whose address differs.</p></div>
+            <div class="runbar"><span class="small" id="rmReady" style="margin:0"></span>
+              <div class="grow"><button class="btn tiny danger" id="rmReset" type="button" title="Remove the files and the result">Start new</button><button class="btn primary" id="rmRun" type="button" disabled>Run matching</button></div></div>
+            <p class="err" id="rmErr" hidden></p>
+          </section>
+          <section class="panel" id="rmResult" hidden></section>
         </section>
       </div>
     </section>
@@ -1893,13 +1936,177 @@ function flash(text, bad) {
   st.innerHTML = `<span style="color:${bad ? "var(--alert)" : "var(--arc)"};letter-spacing:.02em;text-transform:none;font:500 13px/1.4 var(--body)">${esc(text)}</span>`;
 }
 function setPill(id, text, cls) { const p = $(id); p.className = "pill " + (cls || ""); p.querySelector("b").textContent = text; }
-const VIEWS = ["clean", "migration", "explore", "import-prep", "roadmap"];
+const VIEWS = ["clean", "migration", "explore", "rea", "import-prep", "roadmap"];
 function showView(v) {
   if (!VIEWS.includes(v)) v = "clean";
   VIEWS.forEach((x) => { $("view-" + x).hidden = x !== v; $("tab-" + x).setAttribute("aria-selected", x === v); });
   if (location.hash !== "#" + v) history.replaceState(null, "", "#" + v);
   if (v === "roadmap") renderRoad();
   if (v === "migration" && !M.checked) mgCheck();
+}
+
+// =====================================================================
+// REA MATCHING (Agentbox): REA listings feed vs the old CRM's listing_sale / listing_lease
+// =====================================================================
+const RM = { files: {}, result: null, busy: false };
+const RM_ORDER = [
+  ["rea", "Office REA data", "listings.csv from the REA export", "required"],
+  ["sale", "Listing Sale", "listing_sale.csv", "sale or lease"],
+  ["lease", "Listing Lease", "listing_lease.csv", "sale or lease"],
+  ["props", "Properties", "property.csv · for addresses", "for addresses"],
+  ["contacts", "Contact ID", "Zenu ID map · copied into the workbook", "optional"],
+];
+function rmMsg(t, bad) { const el = $("rmLoadMsg"); el.textContent = t || ""; el.style.color = bad ? "var(--alert)" : ""; }
+function rmErr(t) { const e = $("rmErr"); e.hidden = !t; e.textContent = t || ""; }
+/** Read files (or a folder) and put each table in its slot by its columns; force = the slot from Choose. */
+async function rmAddFiles(list, force) {
+  const items = Array.from(list || []).map((x) => (x instanceof File ? { file: x, path: x.webkitRelativePath || x.name } : x))
+    .filter((x) => /\.(csv|xlsx|xls)$/i.test(x.file.name) && !/^~\$/.test(x.file.name));
+  if (!items.length) { rmMsg("No .csv, .xlsx or .xls files there.", true); return; }
+  const found = {}, skipped = [], errs = [];
+  for (const { file, path } of items) {
+    rmMsg(`Reading ${file.name}…`);
+    await new Promise((r) => setTimeout(r, 0));
+    try {
+      const grids = readGrids(file.name, new Uint8Array(await file.arrayBuffer()));
+      for (const { sheet, grid } of grids) {
+        const fr = E.toFrame(grid);
+        if (!fr || !fr.rows.length) continue;
+        const label = sheet === "csv" || grids.length === 1 ? path : `${path} › ${sheet}`;
+        const kind = force || E.reaMatch.kind(fr.columns, `${path} ${sheet}`);
+        if (!kind) { skipped.push(label); continue; }
+        // two tables for one slot in this batch (e.g. an old results workbook): the bigger one
+        if (!found[kind] || fr.rows.length > found[kind].frame.rows.length) found[kind] = { name: label, path, frame: fr };
+        if (force) break;
+      }
+    } catch (e) { errs.push(`${file.name}: ${e.message}`); }
+  }
+  Object.assign(RM.files, found);
+  if (Object.keys(found).length) RM.result = null;
+  if (!$("rmClient").value.trim()) { const g = rmGuessClient(); if (g) $("rmClient").value = g; }
+  rmRender();
+  const got = Object.keys(found).map((k) => `${E.reaMatch.KINDS[k]} (${found[k].name})`);
+  rmMsg((got.length ? `Loaded ${got.join(", ")}.` : "None of those files is an REA-matching input.") +
+    (skipped.length ? ` Not used: ${skipped.slice(0, 6).join(", ")}${skipped.length > 6 ? "…" : ""}.` : "") + (errs.length ? ` Couldn't read: ${errs.join("; ")}` : ""), !got.length);
+}
+/** "dataExport_mcconnell-bourn_2025…" or "REA Feed - Mcconnell - …" -> "Mcconnell" */
+function rmGuessClient() {
+  for (const f of Object.values(RM.files)) {
+    const m = f.path.match(/dataExport_([a-z]+)/i) || f.path.match(/REA Feed - ([^-\\/]+?) -/i);
+    if (m) return m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+  }
+  return "";
+}
+function rmReadyText() {
+  const f = RM.files, miss = [];
+  if (!f.rea) miss.push("the office's REA data");
+  if (!f.sale && !f.lease) miss.push("Listing Sale and/or Listing Lease");
+  return miss.length ? `Load ${miss.join(" and ")}.` : `Ready${f.props ? "" : " (no Properties: the old addresses and Address Check stay blank)"}.`;
+}
+function rmRender() {
+  const f = RM.files, n = Object.keys(f).length;
+  $("rmCount").textContent = `${n} OF 5`;
+  $("rmClear").hidden = !n && !RM.result;
+  $("rmSlots").innerHTML = RM_ORDER.map(([k, label, hint, need]) => {
+    const x = f[k];
+    return `<div class="file"><span class="name">${esc(label)}</span><span class="kind${x ? " ab" : ""}">${x ? "LOADED" : esc(need.toUpperCase())}</span>
+      <span class="meta code" style="overflow-wrap:anywhere">${x ? `${esc(x.name)} · ${fmt(x.frame.rows.length)} rows` : esc(hint)}</span>
+      <div class="fx" style="grid-column:1/-1"><button class="rm" type="button" data-rm-pick="${k}" title="Choose the ${esc(label)} file">Choose</button>${x ? `<button class="rm" type="button" data-rm-del="${k}" title="Remove this file">Remove</button>` : ""}</div></div>`;
+  }).join("");
+  const ready = !!(f.rea && (f.sale || f.lease));
+  $("rmRun").disabled = !ready || RM.busy;
+  $("rmReady").textContent = rmReadyText();
+  rmRenderResult();
+}
+function rmRun() {
+  const f = RM.files;
+  if (!f.rea || (!f.sale && !f.lease)) throw new Error(rmReadyText());
+  rmErr("");
+  const frames = Object.fromEntries(Object.entries(f).map(([k, v]) => [k, v.frame]));
+  RM.result = E.reaMatch.run(frames, { client: $("rmClient").value });
+  RM.result.office = $("rmOffice").value.trim();
+  rmRender();
+  return RM.result;
+}
+function rmTable(rows, cols, n = 8) {
+  if (!rows.length) return `<p class="small">None.</p>`;
+  return `<div class="tablewrap" style="max-height:340px;overflow:auto"><table><thead><tr>${cols.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows.slice(0, n).map((r) => `<tr>${cols.map((c) => `<td>${esc(r[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+}
+function rmFileName() {
+  const r = RM.result;
+  return `REA Feed - ${(r && r.client) || "Client"} - Matching Results`;
+}
+function rmRenderResult() {
+  const el = $("rmResult"), r = RM.result;
+  if (!r) { el.hidden = true; el.innerHTML = ""; return; }
+  const st = r.stats, oos = Object.entries(st.outOfScope);
+  const notes = [];
+  if (oos.length) notes.push(["INFO", `${fmt(oos.reduce((a, [, n]) => a + n, 0))} REA rows are out of scope: ${oos.map(([k, n]) => `${esc(k)} ${fmt(n)}`).join(", ")}.`]);
+  if (st.differentAddress) notes.push(["WARN", `${fmt(st.differentAddress)} matched listings have a different address in ${esc(r.client)} (Address Check = Different). The client can highlight any to remove.`]);
+  if (st.noSettledDate) notes.push(["WARN", `${fmt(st.noSettledDate)} Sold to Settled listings have no settled date in ${esc(r.client)}.`]);
+  if (st.blankSourceId) notes.push(["INFO", `${fmt(st.blankSourceId)} in-scope REA rows have no source_id, so they can't match.`]);
+  if (st.sharedReaIds) notes.push(["INFO", `${fmt(st.sharedReaIds)} old listings share an REA ID with an earlier one; the first was used.`]);
+  if (!RM.files.props) notes.push(["WARN", "No Properties file: the old addresses and Address Check are blank."]);
+  const sec = (title, rows, cols) => `<details class="group"><summary><span class="label">${esc(title)}</span><span class="code">${fmt(rows.length)} ROWS · FIRST 8</span></summary>${rmTable(rows, cols)}</details>`;
+  el.hidden = false;
+  el.innerHTML = `<div class="panel-head"><span class="label">REA matching complete</span><span class="code">${esc(r.client.toUpperCase())}</span></div>
+    <div class="tiles"><div class="tile"><div class="k">REA in scope</div><div class="v">${fmt(st.inScope)}</div></div>
+      <div class="tile"><div class="k">Matched</div><div class="v hot">${fmt(st.matched)}</div></div>
+      <div class="tile"><div class="k">Sold to Settled</div><div class="v">${fmt(st.settled)}</div></div>
+      <div class="tile"><div class="k">Unable to match</div><div class="v ${st.unable ? "warn" : ""}">${fmt(st.unable)}</div></div></div>
+    <ul class="issues">${notes.map(([s, d]) => `<li><span class="sev ${s}">${s}</span><span>${d}</span></li>`).join("")}</ul>
+    <span class="label section-k">Summary</span>
+    ${rmTable(r.summary.map((x) => ({ ...x, Description: x.Description.replace(/\n+/g, " "), "Action Needed": x["Action Needed"].replace(/\n+/g, " ") })), r.columns.summary)}
+    ${sec("Sold to Settled", r.settled, r.columns.settled)}
+    ${sec("Matched_By SourceID", r.matched, r.columns.matched)}
+    ${sec("Unable to match", r.unable, r.columns.unable)}
+    <div class="runbar"><div class="field"><label class="code" for="rmName">FILE NAME</label><input type="text" class="wide" id="rmName" value="${esc(rmFileName())}" style="width:min(100%,26rem)"></div>
+      <div class="grow"><button class="btn primary" id="rmExport" type="button"${S.downloads ? "" : " disabled"}>Export workbook</button></div></div>
+    <p class="err" id="rmExportMsg"${S.downloads ? " hidden" : ""}>${S.downloads ? "" : "Downloads aren't available in this view. Open the page in Claude to export."}</p>`;
+}
+async function rmExport(filename) {
+  const r = RM.result;
+  if (!r) throw new Error("Run the matching first - there's nothing to export yet.");
+  if (!window.XLSX) throw new Error("The Excel writer didn't load.");
+  const wb = XLSX.utils.book_new();
+  // blank -> no cell (Excel treats "" as filled); aoa_to_sheet keeps big sheets fast
+  const add = (name, columns, rows, widths) => {
+    const aoa = [columns].concat(rows.map((row) => columns.map((c) => { const v = row[c]; return v === null || v === undefined || (typeof v === "string" && !v.trim()) ? null : v; })));
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    if (rows.length) ws["!autofilter"] = { ref: ws["!ref"] };
+    ws["!cols"] = widths || columns.map((c) => ({ wch: Math.min(40, Math.max(10, String(c).length + 2)) }));
+    XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 31));
+  };
+  add("Summary", r.columns.summary, r.summary, [{ wch: 18 }, { wch: 11 }, { wch: 90 }, { wch: 90 }]);
+  add("Sold to Settled", r.columns.settled, r.settled);
+  add("Matched_By SourceID", r.columns.matched, r.matched);
+  add("Unable to match", r.columns.unable, r.unable);
+  if ($("rmInputs").checked) {
+    const f = RM.files;
+    if (f.contacts) add("Contact ID", f.contacts.frame.columns, f.contacts.frame.rows);
+    if (f.sale) add("Listing Sale", f.sale.frame.columns, f.sale.frame.rows);
+    if (f.lease) add("Listing Lease", f.lease.frame.columns, f.lease.frame.rows);
+    if (f.props) { const p = E.reaMatch.withAddress(f.props.frame, "props"); add("Properties", p.columns, p.rows); }
+    const q = E.reaMatch.withAddress(f.rea.frame, "rea"); add(`${r.office ? r.office + " " : ""}REA data`, q.columns, q.rows);
+  }
+  let name = String(filename || $("rmName")?.value || "").trim() || rmFileName();
+  name = name.replace(/[\\/:*?"<>|]+/g, "_"); if (!/\.xlsx$/i.test(name)) name += ".xlsx";
+  const buf = XLSX.write(wb, { bookType: "xlsx", type: "array", compression: true });
+  return saveFile(name, new Blob([buf]));
+}
+function resetRea() {
+  Object.assign(RM, { files: {}, result: null });
+  $("rmFiles").value = ""; $("rmFolder").value = ""; $("rmClient").value = ""; $("rmOffice").value = "";
+  rmErr(""); rmRender(); rmMsg("Cleared. Load the next client's files.");
+}
+function rmForClaude() {
+  const r = RM.result;
+  return {
+    files: Object.fromEntries(RM_ORDER.map(([k, label]) => [label, RM.files[k] ? { file: RM.files[k].name, rows: RM.files[k].frame.rows.length } : null])),
+    ready: !!(RM.files.rea && (RM.files.sale || RM.files.lease)), missing: rmReadyText(),
+    client: $("rmClient").value.trim() || null, office_id: $("rmOffice").value.trim() || null,
+    last_run: r ? { client: r.client, ...r.stats, summary: r.summary.map((x) => ({ sheet: x["Sheet Name"], items: x["# of items"] })), export_file: rmFileName() + ".xlsx" } : null,
+  };
 }
 
 // =====================================================================
@@ -1912,6 +2119,7 @@ const PROMPTS = [
   ["Ask about the data", ["How many contacts have no email?", "Which contacts have no mobile and no email?", "How many contacts are in each state?", "How many split people are there?"]],
   ["Questions about the data", ["In my last job, match zenu_buyer's property_identifier to listings.csv id and give the total sold price per state", "In my last job's zenu_buyer, which property_identifier has the highest property_sold_price?", "Top 10 vendors by price in the last job", "How many appraisals per suburb in the last job?", "Average sold price per state in zenu_buyer"]],
   ["Search & Export", ["Load the search example", "1001 with the contact name and properties attached", "Which files are loaded and how are they linked?", "Contacts in VIC with their properties", "Export the results"]],
+  ["REA Matching", ["What files does REA matching need?", "Run the REA matching for Mcconnell", "How many matched and how many are Sold to Settled?", "Why are some REA listings unable to match?", "Export the REA matching workbook"]],
   ["Import Prep", ["How does Import Prep work?", "Run Import Prep on the example"]],
   ["Roadmap", ["Which CRMs are still in progress?"]],
 ];
@@ -2018,6 +2226,7 @@ function stateForClaude() {
     migration: { bridge: M.connected ? "connected" : M.checked ? "not connected" : "not checked", export_folder: M.picked || null, crm: $("mgCrm").value,
       rules: M.rules ? M.rulesName : null, matrices_ticked: [...M.groups], current_job: M.job, current_job_state: M.jobState },
     output_changes: S.rules.map((x, i) => ({ index: i, change: ruleText(x), cells_changed: S.result?.ruleLog?.[i]?.changed ?? null })),
+    rea_matching: rmForClaude(),
     search_export: { files: X.tables.map((t) => ({ name: t.name, rows: t.rows.length, id_column: t.key })), results: X.result ? X.result.sections.map((s) => ({ file: s.name, rows: s.total, found_as: s.role })) : null },
     real_samples_allowed: $("realSamples").checked,
     roles: Object.fromEntries(Object.entries(E.ROLES).map(([k, [label, field]]) => [k, field ? `${label} (${field})` : label])),
@@ -2287,6 +2496,24 @@ function tools(m) {
         act(`Searched: ${r.sections.map((s) => `${s.name} ${s.total}`).join(" · ") || "nothing found"}`);
         return xpResultForClaude(r);
       } },
+    { name: "rea_matching", description: "The REA Matching tab (Agentbox): matches the office's REA listings (listings.csv from the REA export) to the old CRM's listing_sale / listing_lease by REA ID " +
+        "(source_id = rea_unique_id; Appraisal and Property rows are out of scope) and builds the 'REA Feed - <client> - Matching Results' workbook: Summary, Sold to Settled (REA Sold + old 'settled'), " +
+        "Matched_By SourceID (with Address Check), Unable to match. status: loaded files and the last run's counts. run: match (client = the client's name for the column names). export: save the workbook. " +
+        "The user loads the files in the tab. You get counts, never rows.",
+      inputSchema: { type: "object", properties: {
+        action: { type: "string", enum: ["status", "run", "export"] },
+        client: { type: "string", description: "run: client name, e.g. Mcconnell" }, office: { type: "string", description: "run: REA office ID for the REA sheet name" },
+        filename: { type: "string" } }, required: ["action"] },
+      execute: async ({ action, client, office, filename }) => {
+        showView("rea");
+        if (action === "status") { act("Read the REA Matching tab"); return rmForClaude(); }
+        if (action === "export") { const r = await rmExport(filename); act(r === "saved" ? "Saved the REA matching workbook" : "Export cancelled"); return { result: r }; }
+        if (client) $("rmClient").value = client;
+        if (office !== undefined) $("rmOffice").value = office;
+        const r = rmRun();
+        act(`REA matching: ${r.stats.matched} matched, ${r.stats.settled} sold to settled, ${r.stats.unable} unable to match`);
+        return rmForClaude().last_run;
+      } },
     { name: "query_data", description: "Questions beyond a look-up: highest / lowest / top N (sort_by, descending, limit), how many (aggregate count), " +
         "total / average / min / max of agg_column (min/max return the row), per value (group_by), where filters (is, not, contains, starts, blank, filled, gt, gte, lt, lte on numbers or dates). " +
         "source: job = a migration job's output or export file on the PC (file e.g. zenu_buyer, listings.csv; job_id, else the open/newest job); folder = a PC folder (default: the Migration tab's export folder); " +
@@ -2346,14 +2573,14 @@ function tools(m) {
           ...(r.result && r.result.count !== undefined ? { result: { count: r.result.count } } : {}), values_hidden: true,
           note: "The answer table is shown to the user under your reply. Say it's there; don't guess values. To see values yourself the user ticks 'Let Claude read the rows I ask about'." };
       } },
-    { name: "start_new", description: "Clear a tab so the user can start a new client: 'clean' (files, mapping, results), 'migration' (folder, rules, options, job panel; a running job keeps running on the PC), 'explore' (Search & Export files and results), 'import-prep' (both files and the result) or 'all'. Only when the user asks to clear, reset or start new.",
-      inputSchema: { type: "object", properties: { area: { type: "string", enum: ["clean", "migration", "explore", "import-prep", "all"] } }, required: ["area"] },
+    { name: "start_new", description: "Clear a tab so the user can start a new client: 'clean' (files, mapping, results), 'migration' (folder, rules, options, job panel; a running job keeps running on the PC), 'explore' (Search & Export files and results), 'rea' (REA Matching files and result), 'import-prep' (both files and the result) or 'all'. Only when the user asks to clear, reset or start new.",
+      inputSchema: { type: "object", properties: { area: { type: "string", enum: ["clean", "migration", "explore", "rea", "import-prep", "all"] } }, required: ["area"] },
       execute: ({ area }) => { const done = startNew(area); act("Cleared " + done.join(", ")); return "Cleared: " + done.join(", "); } },
-    { name: "open_tab", description: "Show a tab: 'clean', 'migration', 'explore' (Search & Export), 'import-prep' or 'roadmap'.",
+    { name: "open_tab", description: "Show a tab: 'clean', 'migration', 'explore' (Search & Export), 'rea' (REA Matching), 'import-prep' or 'roadmap'.",
       inputSchema: { type: "object", properties: { tab: { type: "string", enum: VIEWS } }, required: ["tab"] }, execute: ({ tab }) => { showView(tab); return "ok"; } },
   ];
   // Claude may accept only so many tools: most useful first, so a cut only drops the least used
-  const PRIORITY = ["get_state", "query_data", "query_records", "migration", "explore", "search_guides", "set_mapping", "set_field_options", "run_cleaning", "change_values",
+  const PRIORITY = ["get_state", "query_data", "query_records", "migration", "explore", "rea_matching", "search_guides", "set_mapping", "set_field_options", "run_cleaning", "change_values",
     "get_column_samples", "export_workbook", "lookup_suburb", "zenu_field", "start_new", "undo_changes", "import_prep", "switch_handler", "load_example", "roadmap", "open_tab"];
   const rank = (t) => { const i = PRIORITY.indexOf(t.name); return i < 0 ? PRIORITY.length : i; };
   T.sort((a, b) => rank(a) - rank(b));
@@ -2380,6 +2607,7 @@ How to work:
 - To give an export column a fixed value or fix values (e.g. CONTACT_TEAM_MEMBER_1 = an agent's name for all records, replace one value with another, fill blanks), use change_values, then tell the user how many cells changed and to export again. undo_changes reverses it.
 - Questions needing sorting, top / highest / lowest, totals, averages, min / max or counts per value: use query_data (never say you can't sort or rank). It reads every file: a job's outputs AND its export CSVs (source job), a PC folder, Search & Export files, Contact cleaning files. When the answer needs a column from another file (e.g. sold price per state: the buyer file has no state, listings.csv does), use join: list_files first if unsure which column holds the key, then join on it and group_by the joined column. Always say how many rows found a match in the joined file.
 - Search & Export tab (files the user loaded to look things up): use the explore tool. "ID X with the contact name and properties attached" = find with table = the contacts file, values = [X] (other linked files are attached by default; include limits them; attach = the name columns), then export when asked. The tab shows the user the rows; say what was found per file.
+- REA Matching tab (an Agentbox client's REA listings feed vs its old listings): use rea_matching (status, run, export). It needs the office's REA data (listings.csv) and listing_sale and/or listing_lease; property adds the old addresses; Contact ID is only copied into the workbook. Explain from the counts (matched by REA ID; unable to match = no old listing has that REA ID; Appraisal / Property REA rows are out of scope).
 - "This job" / "this client" means open_job in the page summary (the job the user clicked in Recent jobs); the migration tool uses it when no job_id is given.
 - Migrations (Agentbox, Eagle, VaultRE, Rex, ZenuTransfer, General, MailingProspect) run on Daryl's PC through the DARVIS bridge with the Zenu Migration Tool's own engine; use the migration tool. Agentbox, Eagle and VaultRE need contact_cleaned.csv in the export folder (Contact cleaning -> Export contact_cleaned.csv). Start a run only when the user asks. When explaining a job, read job_status, job_log and the reconciliation, and quote numbers.
 
@@ -3236,6 +3464,7 @@ function startNew(area) {
   if (a === "clean" || a === "all") { resetClean(); done.push("Contact cleaning"); }
   if (a === "migration" || a === "all") { const r = resetMigration(); done.push("Migration" + (r ? ` (job ${r} keeps running on your PC)` : "")); }
   if (a === "explore" || a === "all") { resetExplore(); done.push("Search & Export"); }
+  if (a === "rea" || a === "all") { resetRea(); done.push("REA Matching"); }
   if (a === "import-prep" || a === "all") { resetImportPrep(); done.push("Import Prep"); }
   if (!done.length) throw new Error("Nothing to clear on the Roadmap. Say which tab: contact cleaning, migration, search & export or import prep.");
   if (a !== "all") showView(a);
@@ -3336,6 +3565,44 @@ $("roadAdd").addEventListener("submit", async (e) => {
 $("composer").addEventListener("submit", (e) => { e.preventDefault(); sendChat($("chatInput").value); });
 $("chatInput").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat($("chatInput").value); } });
 
+// ---- REA Matching ----
+$("rmFiles").addEventListener("change", (e) => { rmAddFiles(e.target.files); e.target.value = ""; });
+$("rmFolder").addEventListener("change", (e) => { rmAddFiles(e.target.files); e.target.value = ""; });
+$("rmOne").addEventListener("change", (e) => { const k = e.target.dataset.kind; rmAddFiles(e.target.files, k); e.target.value = ""; });
+{
+  const dz = $("rmDrop");
+  ["dragenter", "dragover"].forEach((t) => dz.addEventListener(t, (e) => { e.preventDefault(); dz.classList.add("over"); }));
+  ["dragleave", "drop"].forEach((t) => dz.addEventListener(t, (e) => { e.preventDefault(); dz.classList.remove("over"); }));
+  dz.addEventListener("drop", async (e) => {
+    const entries = Array.from(e.dataTransfer.items || []).map((i) => (i.webkitGetAsEntry ? i.webkitGetAsEntry() : null)).filter(Boolean);
+    const plain = e.dataTransfer.files;
+    try { rmAddFiles(entries.length ? await xpWalk(entries) : plain); } catch (ex) { rmMsg(ex.message, true); }
+  });
+}
+document.addEventListener("click", async (e) => {
+  const t = e.target;
+  try {
+    if (t.closest("#rmFolderBtn")) $("rmFolder").click();
+    else if (t.closest("[data-rm-pick]")) { const inp = $("rmOne"); inp.dataset.kind = t.closest("[data-rm-pick]").dataset.rmPick; inp.click(); }
+    else if (t.closest("[data-rm-del]")) { delete RM.files[t.closest("[data-rm-del]").dataset.rmDel]; RM.result = null; rmRender(); }
+    else if (t.closest("#rmClear") || t.closest("#rmReset")) resetRea();
+    else if (t.closest("#rmRun")) {
+      RM.busy = true; $("rmRun").disabled = true; $("rmRun").textContent = "Matching…";
+      await new Promise((r) => setTimeout(r, 20));
+      try { rmRun(); } finally { RM.busy = false; $("rmRun").textContent = "Run matching"; rmRender(); }
+    }
+    else if (t.closest("#rmExport")) {
+      const el = $("rmExportMsg"); el.hidden = false; el.style.color = ""; el.textContent = "Writing the workbook…";
+      await new Promise((r) => setTimeout(r, 20));
+      const r = await rmExport(); el.style.color = r === "saved" ? "var(--ok)" : ""; el.textContent = r === "saved" ? "Saved." : "Export cancelled.";
+    }
+  } catch (ex) {
+    if (t.closest("#rmExport")) { const el = $("rmExportMsg"); el.hidden = false; el.style.color = ""; el.textContent = ex.message; }
+    else if (t.closest("[id^=rm],[data-rm-pick],[data-rm-del]")) rmErr(ex.message || String(ex));
+  }
+});
+document.addEventListener("input", (e) => { if (e.target.id === "rmClient" && RM.result) { /* the name applies on the next run */ $("rmReady").textContent = "Client name changed: run again to use it."; } });
+
 // ---- Search & Export ----
 $("xpFiles").addEventListener("change", (e) => { xpAddFiles(e.target.files); e.target.value = ""; });
 $("xpFolder").addEventListener("change", (e) => { xpAddFiles(e.target.files); e.target.value = ""; });
@@ -3380,6 +3647,7 @@ document.addEventListener("keydown", (e) => { if (e.target.id === "xpVals" && e.
 // ---------------- start ----------------
 (async function start() {
   renderPrompts(); welcome(); xpRenderAll();
+  rmRender();
   showView(location.hash.slice(1) || "clean");
   loadExample("agentbox");
   try {
@@ -3396,7 +3664,7 @@ document.addEventListener("keydown", (e) => { if (e.target.id === "xpVals" && e.
     $("chatMode").textContent = s ? (S.toolsOK ? "CLAUDE · ACTIONS" : "CLAUDE · ANSWERS") : "COMMANDS ONLY";
     if (S.card && !S.busy) renderReview();
   });
-  use("downloads").then((d) => { S.downloads = d; if (S.result) renderResult(); if (S.ip.result) runImportPrep(); xpRenderResult(); });
+  use("downloads").then((d) => { S.downloads = d; if (S.result) renderResult(); if (S.ip.result) runImportPrep(); xpRenderResult(); rmRenderResult(); });
   use("mcp").then((mcp) => {
     S.mcp = mcp;
     if (!mcp) { historyList(); setPill("pBridge", "Desktop app only", "warn"); if (!$("view-migration").hidden) mgCheck(); else mgSetConn(false, "The DARVIS bridge only works when DARVIS is open in the Claude desktop app on your PC."); return; }

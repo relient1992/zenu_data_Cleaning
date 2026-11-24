@@ -1497,6 +1497,183 @@
     return String(v).replace(/[0-9]/g, "9").replace(/[A-Z]/g, "A").replace(/[a-z]/g, "a").slice(0, 40);
   }
 
+  // =====================================================================
+  // REA MATCHING (Agentbox): the office's REA listings feed matched to the old CRM's listings
+  //   inputs: listing_sale, listing_lease, property (old CRM), Contact ID (Zenu ID map), REA data
+  //   REA source_id = old listing's rea_unique_id (text and numbers compared alike, unlike VLOOKUP).
+  //   In scope: every REA row except Appraisal and Property records.
+  // =====================================================================
+  const REA_OUT_OF_SCOPE = new Set(["appraisal", "property"]);
+  const REA_KINDS = {
+    sale: "Listing Sale", lease: "Listing Lease", props: "Properties", contacts: "Contact ID", rea: "Office REA data",
+  };
+  /** Which REA-matching input a table is, from its columns (and file name as a tie-break), or "". */
+  function reaKind(columns, name) {
+    const has = (c) => columns.some((x) => String(x).trim().toLowerCase() === c);
+    const n = String(name || "").toLowerCase();
+    if (has("source_contact_id") && has("contact_id")) return "contacts";
+    if (has("source_id") && has("listing_status")) return "rea";
+    if (has("rea_unique_id") && (has("settled_date") || has("sold_price") || has("contract_date"))) return "sale";
+    if (has("rea_unique_id") && (has("leased_date") || has("listed_rent") || has("lease_start_date"))) return "lease";
+    if (has("rea_unique_id")) return /lease/.test(n) ? "lease" : /sale/.test(n) ? "sale" : "";
+    if (has("property_id") && has("street_name") && has("suburb") && !has("listing_id")) return "props";
+    return "";
+  }
+  const reaKey = (v) => {
+    let s = String(v ?? "").trim().toLowerCase();
+    if (/^\d+\.0+$/.test(s)) s = s.replace(/\.0+$/, "");
+    return s;
+  };
+  const reaText = (v) => String(v ?? "").trim();
+  const reaJoin = (sep, parts) => parts.map(reaText).filter(Boolean).join(sep);
+  const reaDate = (v) => { const s = reaText(v); return s ? formatDate(s, "date") : ""; };
+  /** A row's value by column name, ignoring case and spaces (rea_unique_id = REA_UNIQUE_ID). */
+  function reaGetter(columns) {
+    const map = {};
+    columns.forEach((c) => { const k = String(c).trim().toLowerCase().replace(/[\s-]+/g, "_"); if (!(k in map)) map[k] = c; });
+    return (row, col) => { const c = map[col]; return c === undefined ? "" : row[c]; };
+  }
+  const REA_UNIT_WORDS = new Set(["level", "lvl", "lv", "unit", "suite", "shop", "lot", "rear", "of", "ground", "floor", "apartment", "apt", "villa", "townhouse", "flat", "cnr", "corner"]);
+  /** street number | first word of the street | suburb, from unit + number + street name together, however the
+   *  CRM split them ("8E" / "30-34 Churchhill" = "8E 30-34" / "Churchhill Avenue"). The number is the last one
+   *  before the street's name ("REAR OF 241" -> 241, "A9, 1-9" -> 1-9), so units and words before it don't count. */
+  function reaStreetKey(unitNumStreet, suburb) {
+    const words = reaText(unitNumStreet).toLowerCase().replace(/[\\"`‘’]/g, "").replace(/\s*[-‐-―]\s*/g, "-")
+      .split(/[\s,/]+/).filter(Boolean);
+    const at = words.findIndex((w) => /^[a-z][a-z']+$/.test(w) && !REA_UNIT_WORDS.has(w));
+    if (at < 0) return "";
+    // a range counts by its first number: 22 = 22-28
+    const nums = words.slice(0, at).join(" ").match(/\d+[a-z]?(?:-\d+[a-z]?)?/g);
+    const b = reaText(suburb).toLowerCase().replace(/[^a-z]/g, "");
+    return b ? `${nums ? nums[nums.length - 1].split("-")[0] : ""}|${words[at].replace(/'/g, "")}|${b}` : "";
+  }
+  /**
+   * Run the matching. frames: {sale, lease, props, contacts, rea} each {columns, rows} (sale or lease may be missing,
+   * contacts is only carried through). Returns the sheets of the "REA Feed - <client> - Matching Results" workbook.
+   */
+  function reaMatch(frames, opts = {}) {
+    const client = reaText(opts.client) || "Old Office";
+    if (!frames.rea) throw new Error("Load the office's REA data (listings.csv from the REA export).");
+    if (!frames.sale && !frames.lease) throw new Error("Load listing_sale and/or listing_lease from the old CRM export.");
+    const R = reaGetter(frames.rea.columns);
+    // old listings by REA unique id: sale first, then lease (as the VLOOKUPs did); the first listing wins a shared id
+    const byKey = new Map(), shared = { sale: 0, lease: 0 };
+    for (const kind of ["sale", "lease"]) {
+      const f = frames[kind];
+      if (!f) continue;
+      const G = reaGetter(f.columns);
+      for (const row of f.rows) {
+        const k = reaKey(G(row, "rea_unique_id"));
+        if (!k) continue;
+        if (byKey.has(k)) { shared[kind]++; continue; }
+        byKey.set(k, { kind, row, G });
+      }
+    }
+    const props = new Map();
+    if (frames.props) {
+      const P = reaGetter(frames.props.columns);
+      for (const row of frames.props.rows) {
+        const id = reaKey(P(row, "property_id"));
+        if (!id || props.has(id)) continue;
+        props.set(id, {
+          address: reaJoin(" ", [reaJoin(", ", [reaJoin(" ", ["lot_num", "level_num", "unit_num", "street_num", "street_name", "street_type"].map((c) => P(row, c))), P(row, "suburb"), P(row, "state")]), P(row, "postcode")]),
+          key: reaStreetKey(reaJoin(" ", [P(row, "unit_num"), P(row, "street_num"), P(row, "street_name")]), P(row, "suburb")),
+        });
+      }
+    }
+    const C = client;
+    const matched = [], settled = [], unable = [], outOfScope = {};
+    let different = 0, noSettledDate = 0, blankSource = 0;
+    for (const row of frames.rea.rows) {
+      const status = reaText(R(row, "listing_status"));
+      if (REA_OUT_OF_SCOPE.has(status.toLowerCase())) { outOfScope[status] = (outOfScope[status] || 0) + 1; continue; }
+      const address = reaJoin(" ", [reaJoin(", ", [reaJoin(" ", [R(row, "unit_number"), R(row, "street_number"), R(row, "street_name")]), R(row, "suburb"), R(row, "state")]), R(row, "postcode")]);
+      const listed = reaDate(R(row, "date_listed")), contract = reaDate(R(row, "contract_date")), leased = reaDate(R(row, "leased_date"));
+      const key = reaKey(R(row, "source_id"));
+      if (!key) blankSource++;
+      const hit = key ? byKey.get(key) : null;
+      if (!hit) {
+        unable.push({
+          ID: reaText(R(row, "id")), SOURCE_ID: reaText(R(row, "source_id")), LISTING_STATUS: status, SALE_METHOD: reaText(R(row, "sale_method")),
+          "Full Address": address, UNIT_NUMBER: reaText(R(row, "unit_number")), STREET_NUMBER: reaText(R(row, "street_number")),
+          STREET_NAME: reaText(R(row, "street_name")), SUBURB: reaText(R(row, "suburb")), POSTCODE: reaText(R(row, "postcode")), STATE: reaText(R(row, "state")),
+          "Extracted Listed Date": listed, "Extracted Contract Date": contract, "Extracted Leased Date": leased,
+        });
+        continue;
+      }
+      const G = hit.G, old = hit.row;
+      const pid = reaText(G(old, "property_id")), prop = props.get(reaKey(pid));
+      const reaStreet = reaStreetKey(reaJoin(" ", [R(row, "unit_number"), R(row, "street_number"), R(row, "street_name")]), R(row, "suburb"));
+      const check = !prop ? (frames.props ? "No property in " + C : "") : prop.key && reaStreet && prop.key === reaStreet ? "Same" : "Different";
+      if (check === "Different") different++;
+      const oldStatus = reaText(G(old, "status"));
+      const m = {
+        Indicator: "Matched", "REA ID": reaText(R(row, "id")), "REA SOURCE_ID": reaText(R(row, "source_id")), "REA LISTING_STATUS": status,
+        "REA SALE_METHOD": reaText(R(row, "sale_method")), "REA Full Address": address,
+        "REA Extracted Listed Date": listed, "REA Extracted Contract Date": contract, "REA Extracted Leased Date": leased,
+        [`${C} Listing ID`]: reaText(G(old, "listing_id")), [`${C} Property ID`]: pid, [`${C} REA ID`]: reaText(G(old, "rea_unique_id")),
+        [`${C} Status`]: oldStatus, [`${C} Sale/Lease`]: reaText(G(old, "listing_type")) || hit.kind,
+        [`${C} Property Address`]: prop ? prop.address : "",
+        [`${C} Listed Date`]: reaDate(G(old, "listed_date")),
+        [`${C} Contract Date`]: hit.kind === "sale" ? reaDate(G(old, "contract_date")) : "",
+        [`${C} Leased Date`]: hit.kind === "lease" ? reaDate(G(old, "leased_date")) : "",
+        "Address Check": check,
+      };
+      matched.push(m);
+      if (status.toLowerCase() === "sold" && oldStatus.toLowerCase() === "settled") {
+        const sd = hit.kind === "sale" ? reaDate(G(old, "settled_date")) : "";
+        if (!sd) noSettledDate++;
+        settled.push({
+          "REA ID": m["REA ID"], "REA SOURCE_ID": m["REA SOURCE_ID"], "REA LISTING_STATUS": status,
+          [`${C} Listing ID`]: m[`${C} Listing ID`], [`${C} Property ID`]: pid, [`${C} REA ID`]: m[`${C} REA ID`],
+          [`${C} Status`]: oldStatus, "Settled Date": sd,
+        });
+      }
+    }
+    const summary = [
+      { "Sheet Name": "Matched", "# of items": matched.length,
+        Description: `A confirmed match between your old office and REA Extract can be found for the in-scope listings that have come through from REA. Matched based on REA ID.` +
+          (different ? `\n\nPlease note that there are ${different} listings that matched with REA ID but have a different address. Please highlight anything you would like to remove from the list.` : ""),
+        "Action Needed": "Once approved. We will proceed to attach the corresponding data like vendor/purchaser to these REA listings." },
+      { "Sheet Name": "Sold to Settled", "# of items": settled.length,
+        Description: `Out of the matched Sold properties, these are the ones that are in 'Settled' status in your old database\n\nWe will be updating these to 'Settled' status in Zenu.`,
+        "Action Needed": "Please let us know if you want to keep these properties as Sold." +
+          (noSettledDate ? `\n${noSettledDate} listings have NO settlement date. Please fill these in if you want them to be updated.` : "") },
+      { "Sheet Name": "Unable to match", "# of items": unable.length,
+        Description: "Unable to find address in Old office extract.",
+        "Action Needed": `No action needed from you. Please note that we will NOT be able to attach any old ${C} data to these.` },
+    ];
+    const reaRows = frames.rea.rows.length, inScope = matched.length + unable.length;
+    return {
+      client: C, summary, matched, settled, unable,
+      stats: { reaRows, inScope, outOfScope, matched: matched.length, settled: settled.length, unable: unable.length,
+        differentAddress: different, noSettledDate, blankSourceId: blankSource, oldListings: byKey.size, sharedReaIds: shared.sale + shared.lease },
+      columns: {
+        matched: ["Indicator", "REA ID", "REA SOURCE_ID", "REA LISTING_STATUS", "REA SALE_METHOD", "REA Full Address", "REA Extracted Listed Date", "REA Extracted Contract Date", "REA Extracted Leased Date",
+          `${C} Listing ID`, `${C} Property ID`, `${C} REA ID`, `${C} Status`, `${C} Sale/Lease`, `${C} Property Address`, `${C} Listed Date`, `${C} Contract Date`, `${C} Leased Date`, "Address Check"],
+        settled: ["REA ID", "REA SOURCE_ID", "REA LISTING_STATUS", `${C} Listing ID`, `${C} Property ID`, `${C} REA ID`, `${C} Status`, "Settled Date"],
+        unable: ["ID", "SOURCE_ID", "LISTING_STATUS", "SALE_METHOD", "Full Address", "UNIT_NUMBER", "STREET_NUMBER", "STREET_NAME", "SUBURB", "POSTCODE", "STATE", "Extracted Listed Date", "Extracted Contract Date", "Extracted Leased Date"],
+        summary: ["Sheet Name", "# of items", "Description", "Action Needed"],
+      },
+    };
+  }
+
+  /** An input table with its full address added (Properties: "Full Address" after postcode; REA data: "full add"
+   *  after state), as the matching results workbook shows them. */
+  function reaWithAddress(frame, kind) {
+    const G = reaGetter(frame.columns);
+    const isRea = kind === "rea";
+    const name = isRea ? "full add" : "Full Address";
+    if (frame.columns.some((c) => String(c).trim().toLowerCase() === name.toLowerCase())) return frame;
+    const after = frame.columns.findIndex((c) => String(c).trim().toLowerCase() === (isRea ? "state" : "postcode"));
+    const columns = frame.columns.slice();
+    columns.splice(after < 0 ? columns.length : after + 1, 0, name);
+    const rows = frame.rows.map((row) => ({ ...row, [name]: isRea
+      ? reaJoin(" ", [reaJoin(", ", [reaJoin(" ", [G(row, "unit_number"), G(row, "street_number"), G(row, "street_name")]), G(row, "suburb"), G(row, "state")]), G(row, "postcode")])
+      : reaJoin(" ", [reaJoin(", ", [reaJoin(" ", ["lot_num", "level_num", "unit_num", "street_num", "street_name", "street_type"].map((c) => G(row, c))), G(row, "suburb"), G(row, "state")]), G(row, "postcode")]) }));
+    return { columns, rows };
+  }
+
   const api = {
     cell, normalizeHeader, splitNames, ContactDetailsCleaner, isValidEmail, AddressSplitter, normPlace, closeMatch,
     ROLES, ROLE_HINTS, SUMMARY_COLUMNS, excelTrimClean, contactNo, dateDdmmyyyy, parseDate, formatDate, DATE_MODES, DATE_ROLES,
@@ -1505,6 +1682,7 @@
       decodeComment, categoriesByContact, agentNames, teamMember1, build: buildAgentbox, linkNotes },
     toFrame, ROLE_HELP, aiFits, shape, isDataLike,
     importPrep: { run: importPrep, toCsv, clean: importPrepClean, stringify: importPrepStringify, MAX_ROWS: IP_MAX_ROWS },
+    reaMatch: { run: reaMatch, kind: reaKind, KINDS: REA_KINDS, withAddress: reaWithAddress },
   };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.DarisEngine = api;

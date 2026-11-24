@@ -197,6 +197,25 @@ table's ID column (filled and unique, e.g. contact_id); change it under the tabl
   values only when "Let Claude read the rows I ask about" is ticked.
 - The files stay in the page (never uploaded) until you reload it or press Clear / say "clear search".
 
+## REA Matching (Agentbox REA feed vs the old listings)
+
+The **REA Matching** tab builds the "REA Feed - <client> - Matching Results" workbook for an Agentbox client.
+
+**Input files** (drop them or the folder; each is recognised from its columns):
+- **Office REA data**: listings.csv from the REA data export (required).
+- **Listing Sale** and/or **Listing Lease**: listing_sale.csv / listing_lease.csv from the Agentbox system export (at least one).
+- **Properties**: property.csv, for the old addresses and the Address Check.
+- **Contact ID**: the Zenu ID map (source_contact_id -> contact_id). Only copied into the workbook.
+
+**How it matches**
+- REA rows with listing_status Appraisal or Property are out of scope; every other REA row is matched or unable to match.
+- Matched = the REA source_id equals an old listing's rea_unique_id (Listing Sale first, then Listing Lease; the first old listing wins a shared ID). IDs saved as numbers and as text match alike; Excel's VLOOKUP missed those (on McConnell, 1,423 listings).
+- **Sold to Settled** = matched rows where REA says Sold and the old CRM says settled, with the old settled date. The Summary says how many have no settled date.
+- **Address Check** on Matched_By SourceID: Same or Different, comparing street number, street name and suburb of the REA address with the old property's address (units and Level / Rear words ignored; a range counts by its first number).
+- **Unable to match** = in-scope REA rows whose source_id no old listing has.
+
+**Workbook sheets**: Summary, Sold to Settled, Matched_By SourceID, Unable to match, then (if ticked) Contact ID, Listing Sale, Listing Lease, Properties (with Full Address) and <office> REA data (with full add). The client name goes in the column names (Mcconnell Listing ID). Dates are dd/mm/yyyy.
+
 ## Import Prep
 Replicates the Import Prep macro's "Internal Output". Give it the input file (xlsx or csv) and the
 "Compare To" template (its row 1 holds the Zenu column names). For every sheet (except Document
