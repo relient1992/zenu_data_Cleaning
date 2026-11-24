@@ -201,6 +201,8 @@ table's ID column (filled and unique, e.g. contact_id); change it under the tabl
 
 The **REA Matching** tab builds the "REA Feed - <client> - Matching Results" workbook for an Agentbox client.
 
+**Source CRM**: pick the client's old system first. **Agentbox** is built; **Rex**, **VaultRE** and **Eagle** show as coming later (each needs its own export files and matching rules). Switching CRM clears the loaded files.
+
 **Input files** (drop them or the folder; each is recognised from its columns):
 - **Office REA data**: listings.csv from the REA data export (required).
 - **Listing Sale** and/or **Listing Lease**: listing_sale.csv / listing_lease.csv from the Agentbox system export (at least one).

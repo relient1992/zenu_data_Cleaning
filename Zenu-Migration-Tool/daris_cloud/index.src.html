@@ -482,6 +482,10 @@ tr.gap td { text-align: center; color: var(--faint); font-size: 10.5px; letter-s
     <section class="view" id="view-rea" role="tabpanel" aria-labelledby="tab-rea" hidden>
       <div class="shell">
         <aside class="rail">
+          <section class="panel" aria-labelledby="rmCrmTitle">
+            <div class="panel-head"><span class="label" id="rmCrmTitle">Source CRM</span><span class="code">OLD SYSTEM</span></div>
+            <div class="protocols" id="rmCrms"></div>
+          </section>
           <section class="panel" aria-labelledby="rmTitle">
             <div class="panel-head"><span class="label" id="rmTitle">Input files</span><span class="code" id="rmCount">0 OF 5</span><button class="btn tiny danger" id="rmClear" type="button" hidden title="Remove the files and the result">Clear</button></div>
             <label class="drop" id="rmDrop">
@@ -508,8 +512,8 @@ tr.gap td { text-align: center; color: var(--faint); font-size: 10.5px; letter-s
         </aside>
         <section class="work">
           <section class="panel">
-            <div class="panel-head"><span class="label">REA matching</span><span class="code">AGENTBOX · MATCHED BY REA ID</span></div>
-            <div class="say"><p>Matches the office's <strong>REA listings</strong> to the old Agentbox listings by REA ID: REA <span class="mono">source_id</span> = Agentbox <span class="mono">rea_unique_id</span> (Listing Sale first, then Listing Lease). Writes <strong>Summary</strong>, <strong>Sold to Settled</strong>, <strong>Matched_By SourceID</strong> and <strong>Unable to match</strong>.</p>
+            <div class="panel-head"><span class="label">REA matching</span><span class="code" id="rmCrmCode">AGENTBOX · MATCHED BY REA ID</span></div>
+            <div class="say"><p>Matches the office's <strong>REA listings</strong> to the old CRM's listings by REA ID: <span id="rmKeyNote">REA source_id = Agentbox rea_unique_id (Listing Sale first, then Listing Lease)</span>. Writes <strong>Summary</strong>, <strong>Sold to Settled</strong>, <strong>Matched_By SourceID</strong> and <strong>Unable to match</strong>.</p>
               <p>Appraisal and Property records in the REA data are out of scope. IDs saved as numbers and as text are matched alike (Excel's VLOOKUP misses those). <strong>Address Check</strong> flags matches whose address differs.</p></div>
             <div class="runbar"><span class="small" id="rmReady" style="margin:0"></span>
               <div class="grow"><button class="btn tiny danger" id="rmReset" type="button" title="Remove the files and the result">Start new</button><button class="btn primary" id="rmRun" type="button" disabled>Run matching</button></div></div>
@@ -1948,20 +1952,26 @@ function showView(v) {
 // =====================================================================
 // REA MATCHING (Agentbox): REA listings feed vs the old CRM's listing_sale / listing_lease
 // =====================================================================
-const RM = { files: {}, result: null, busy: false };
-const RM_ORDER = [
-  ["rea", "Office REA data", "listings.csv from the REA export", "required"],
-  ["sale", "Listing Sale", "listing_sale.csv", "sale or lease"],
-  ["lease", "Listing Lease", "listing_lease.csv", "sale or lease"],
-  ["props", "Properties", "property.csv · for addresses", "for addresses"],
-  ["contacts", "Contact ID", "Zenu ID map · copied into the workbook", "optional"],
-];
+const RM = { crm: "agentbox", files: {}, result: null, busy: false };
+const rmCrm = () => E.reaMatch.CRMS[RM.crm];
+const rmSlotList = () => rmCrm().slots || [];
+/** Pick the old CRM. Its input files differ, so a switch clears the loaded files and the result. */
+function rmSetCrm(crm) {
+  if (!E.reaMatch.CRMS[crm]) throw new Error(`Unknown CRM '${crm}'. Choose Agentbox, Rex, VaultRE or Eagle.`);
+  if (crm === RM.crm) return;
+  const had = Object.keys(RM.files).length;
+  Object.assign(RM, { crm, files: {}, result: null });
+  rmErr(""); rmRender();
+  const c = rmCrm();
+  rmMsg(c.ready ? `${c.label} selected.${had ? " The files loaded for the other CRM were cleared." : ""}` : `REA matching for ${c.label} isn't built yet.`, !c.ready);
+}
 function rmMsg(t, bad) { const el = $("rmLoadMsg"); el.textContent = t || ""; el.style.color = bad ? "var(--alert)" : ""; }
 function rmErr(t) { const e = $("rmErr"); e.hidden = !t; e.textContent = t || ""; }
 /** Read files (or a folder) and put each table in its slot by its columns; force = the slot from Choose. */
 async function rmAddFiles(list, force) {
   const items = Array.from(list || []).map((x) => (x instanceof File ? { file: x, path: x.webkitRelativePath || x.name } : x))
     .filter((x) => /\.(csv|xlsx|xls)$/i.test(x.file.name) && !/^~\$/.test(x.file.name));
+  if (!rmCrm().ready) { rmMsg(`REA matching for ${rmCrm().label} isn't built yet. Choose Agentbox, or send a ${rmCrm().label} export and a matching results file so it can be added.`, true); return; }
   if (!items.length) { rmMsg("No .csv, .xlsx or .xls files there.", true); return; }
   const found = {}, skipped = [], errs = [];
   for (const { file, path } of items) {
@@ -1973,7 +1983,7 @@ async function rmAddFiles(list, force) {
         const fr = E.toFrame(grid);
         if (!fr || !fr.rows.length) continue;
         const label = sheet === "csv" || grids.length === 1 ? path : `${path} › ${sheet}`;
-        const kind = force || E.reaMatch.kind(fr.columns, `${path} ${sheet}`);
+        const kind = force || E.reaMatch.kind(fr.columns, `${path} ${sheet}`, RM.crm);
         if (!kind) { skipped.push(label); continue; }
         // two tables for one slot in this batch (e.g. an old results workbook): the bigger one
         if (!found[kind] || fr.rows.length > found[kind].frame.rows.length) found[kind] = { name: label, path, frame: fr };
@@ -1998,32 +2008,38 @@ function rmGuessClient() {
   return "";
 }
 function rmReadyText() {
+  if (!rmCrm().ready) return `REA matching for ${rmCrm().label} isn't built yet. Only Agentbox works for now.`;
   const f = RM.files, miss = [];
   if (!f.rea) miss.push("the office's REA data");
   if (!f.sale && !f.lease) miss.push("Listing Sale and/or Listing Lease");
   return miss.length ? `Load ${miss.join(" and ")}.` : `Ready${f.props ? "" : " (no Properties: the old addresses and Address Check stay blank)"}.`;
 }
 function rmRender() {
-  const f = RM.files, n = Object.keys(f).length;
-  $("rmCount").textContent = `${n} OF 5`;
+  const f = RM.files, n = Object.keys(f).length, c = rmCrm(), slots = rmSlotList();
+  $("rmCrms").innerHTML = Object.entries(E.reaMatch.CRMS).map(([k, x]) => `<button class="proto" type="button" data-rm-crm="${k}" aria-pressed="${k === RM.crm}">
+    <strong>${esc(x.label)}</strong><span>${x.ready ? esc(x.slots.filter((s) => s[3] !== "optional").map((s) => s[1]).join(" · ")) : "Coming later"}</span></button>`).join("");
+  $("rmCrmCode").textContent = `${c.label.toUpperCase()} · MATCHED BY REA ID`;
+  $("rmKeyNote").textContent = c.keyNote || `${c.label} isn't built yet`;
+  $("rmCount").textContent = c.ready ? `${n} OF ${slots.length}` : "NOT BUILT YET";
   $("rmClear").hidden = !n && !RM.result;
-  $("rmSlots").innerHTML = RM_ORDER.map(([k, label, hint, need]) => {
+  $("rmDrop").style.opacity = c.ready ? "" : "0.45";
+  $("rmSlots").innerHTML = !c.ready ? `<div class="notice"><span class="tag">COMING LATER</span><span>REA matching for ${esc(c.label)} isn't built yet. To add it, share a ${esc(c.label)} export and a matching results file done for one of its clients.</span></div>` : slots.map(([k, label, hint, need]) => {
     const x = f[k];
     return `<div class="file"><span class="name">${esc(label)}</span><span class="kind${x ? " ab" : ""}">${x ? "LOADED" : esc(need.toUpperCase())}</span>
       <span class="meta code" style="overflow-wrap:anywhere">${x ? `${esc(x.name)} · ${fmt(x.frame.rows.length)} rows` : esc(hint)}</span>
       <div class="fx" style="grid-column:1/-1"><button class="rm" type="button" data-rm-pick="${k}" title="Choose the ${esc(label)} file">Choose</button>${x ? `<button class="rm" type="button" data-rm-del="${k}" title="Remove this file">Remove</button>` : ""}</div></div>`;
   }).join("");
-  const ready = !!(f.rea && (f.sale || f.lease));
+  const ready = c.ready && !!(f.rea && (f.sale || f.lease));
   $("rmRun").disabled = !ready || RM.busy;
   $("rmReady").textContent = rmReadyText();
   rmRenderResult();
 }
 function rmRun() {
   const f = RM.files;
-  if (!f.rea || (!f.sale && !f.lease)) throw new Error(rmReadyText());
+  if (!rmCrm().ready || !f.rea || (!f.sale && !f.lease)) throw new Error(rmReadyText());
   rmErr("");
   const frames = Object.fromEntries(Object.entries(f).map(([k, v]) => [k, v.frame]));
-  RM.result = E.reaMatch.run(frames, { client: $("rmClient").value });
+  RM.result = E.reaMatch.run(frames, { client: $("rmClient").value, crm: RM.crm });
   RM.result.office = $("rmOffice").value.trim();
   rmRender();
   return RM.result;
@@ -2102,8 +2118,10 @@ function resetRea() {
 function rmForClaude() {
   const r = RM.result;
   return {
-    files: Object.fromEntries(RM_ORDER.map(([k, label]) => [label, RM.files[k] ? { file: RM.files[k].name, rows: RM.files[k].frame.rows.length } : null])),
-    ready: !!(RM.files.rea && (RM.files.sale || RM.files.lease)), missing: rmReadyText(),
+    crm: rmCrm().label, crm_ready: rmCrm().ready,
+    crms: Object.values(E.reaMatch.CRMS).map((x) => `${x.label}${x.ready ? "" : " (coming later)"}`),
+    files: Object.fromEntries(rmSlotList().map(([k, label]) => [label, RM.files[k] ? { file: RM.files[k].name, rows: RM.files[k].frame.rows.length } : null])),
+    ready: rmCrm().ready && !!(RM.files.rea && (RM.files.sale || RM.files.lease)), missing: rmReadyText(),
     client: $("rmClient").value.trim() || null, office_id: $("rmOffice").value.trim() || null,
     last_run: r ? { client: r.client, ...r.stats, summary: r.summary.map((x) => ({ sheet: x["Sheet Name"], items: x["# of items"] })), export_file: rmFileName() + ".xlsx" } : null,
   };
@@ -2119,7 +2137,7 @@ const PROMPTS = [
   ["Ask about the data", ["How many contacts have no email?", "Which contacts have no mobile and no email?", "How many contacts are in each state?", "How many split people are there?"]],
   ["Questions about the data", ["In my last job, match zenu_buyer's property_identifier to listings.csv id and give the total sold price per state", "In my last job's zenu_buyer, which property_identifier has the highest property_sold_price?", "Top 10 vendors by price in the last job", "How many appraisals per suburb in the last job?", "Average sold price per state in zenu_buyer"]],
   ["Search & Export", ["Load the search example", "1001 with the contact name and properties attached", "Which files are loaded and how are they linked?", "Contacts in VIC with their properties", "Export the results"]],
-  ["REA Matching", ["What files does REA matching need?", "Run the REA matching for Mcconnell", "How many matched and how many are Sold to Settled?", "Why are some REA listings unable to match?", "Export the REA matching workbook"]],
+  ["REA Matching", ["What files does REA matching need?", "Which CRMs can REA matching do?", "Run the REA matching for Mcconnell", "How many matched and how many are Sold to Settled?", "Why are some REA listings unable to match?", "Export the REA matching workbook"]],
   ["Import Prep", ["How does Import Prep work?", "Run Import Prep on the example"]],
   ["Roadmap", ["Which CRMs are still in progress?"]],
 ];
@@ -2499,13 +2517,15 @@ function tools(m) {
     { name: "rea_matching", description: "The REA Matching tab (Agentbox): matches the office's REA listings (listings.csv from the REA export) to the old CRM's listing_sale / listing_lease by REA ID " +
         "(source_id = rea_unique_id; Appraisal and Property rows are out of scope) and builds the 'REA Feed - <client> - Matching Results' workbook: Summary, Sold to Settled (REA Sold + old 'settled'), " +
         "Matched_By SourceID (with Address Check), Unable to match. status: loaded files and the last run's counts. run: match (client = the client's name for the column names). export: save the workbook. " +
-        "The user loads the files in the tab. You get counts, never rows.",
+        "crm picks the old CRM (agentbox works; rex, vaultre, eagle are coming later). The user loads the files in the tab. You get counts, never rows.",
       inputSchema: { type: "object", properties: {
         action: { type: "string", enum: ["status", "run", "export"] },
+        crm: { type: "string", enum: ["agentbox", "rex", "vaultre", "eagle"], description: "the old CRM; switching clears loaded files" },
         client: { type: "string", description: "run: client name, e.g. Mcconnell" }, office: { type: "string", description: "run: REA office ID for the REA sheet name" },
         filename: { type: "string" } }, required: ["action"] },
-      execute: async ({ action, client, office, filename }) => {
+      execute: async ({ action, crm, client, office, filename }) => {
         showView("rea");
+        if (crm) { rmSetCrm(crm); act(`REA Matching: ${rmCrm().label}${rmCrm().ready ? "" : " (not built yet)"}`); }
         if (action === "status") { act("Read the REA Matching tab"); return rmForClaude(); }
         if (action === "export") { const r = await rmExport(filename); act(r === "saved" ? "Saved the REA matching workbook" : "Export cancelled"); return { result: r }; }
         if (client) $("rmClient").value = client;
@@ -2607,7 +2627,7 @@ How to work:
 - To give an export column a fixed value or fix values (e.g. CONTACT_TEAM_MEMBER_1 = an agent's name for all records, replace one value with another, fill blanks), use change_values, then tell the user how many cells changed and to export again. undo_changes reverses it.
 - Questions needing sorting, top / highest / lowest, totals, averages, min / max or counts per value: use query_data (never say you can't sort or rank). It reads every file: a job's outputs AND its export CSVs (source job), a PC folder, Search & Export files, Contact cleaning files. When the answer needs a column from another file (e.g. sold price per state: the buyer file has no state, listings.csv does), use join: list_files first if unsure which column holds the key, then join on it and group_by the joined column. Always say how many rows found a match in the joined file.
 - Search & Export tab (files the user loaded to look things up): use the explore tool. "ID X with the contact name and properties attached" = find with table = the contacts file, values = [X] (other linked files are attached by default; include limits them; attach = the name columns), then export when asked. The tab shows the user the rows; say what was found per file.
-- REA Matching tab (an Agentbox client's REA listings feed vs its old listings): use rea_matching (status, run, export). It needs the office's REA data (listings.csv) and listing_sale and/or listing_lease; property adds the old addresses; Contact ID is only copied into the workbook. Explain from the counts (matched by REA ID; unable to match = no old listing has that REA ID; Appraisal / Property REA rows are out of scope).
+- REA Matching tab (a client's REA listings feed vs its old CRM's listings): use rea_matching (status, run, export; crm picks the old CRM - only Agentbox is built, Rex / VaultRE / Eagle are coming later: say so). For Agentbox it needs the office's REA data (listings.csv) and listing_sale and/or listing_lease; property adds the old addresses; Contact ID is only copied into the workbook. Explain from the counts (matched by REA ID; unable to match = no old listing has that REA ID; Appraisal / Property REA rows are out of scope).
 - "This job" / "this client" means open_job in the page summary (the job the user clicked in Recent jobs); the migration tool uses it when no job_id is given.
 - Migrations (Agentbox, Eagle, VaultRE, Rex, ZenuTransfer, General, MailingProspect) run on Daryl's PC through the DARVIS bridge with the Zenu Migration Tool's own engine; use the migration tool. Agentbox, Eagle and VaultRE need contact_cleaned.csv in the export folder (Contact cleaning -> Export contact_cleaned.csv). Start a run only when the user asks. When explaining a job, read job_status, job_log and the reconciliation, and quote numbers.
 
@@ -3582,7 +3602,9 @@ $("rmOne").addEventListener("change", (e) => { const k = e.target.dataset.kind; 
 document.addEventListener("click", async (e) => {
   const t = e.target;
   try {
-    if (t.closest("#rmFolderBtn")) $("rmFolder").click();
+    if (t.closest("[data-rm-crm]")) rmSetCrm(t.closest("[data-rm-crm]").dataset.rmCrm);
+    else if (t.closest("#rmFolderBtn")) { if (rmCrm().ready) $("rmFolder").click(); else rmAddFiles([]); }
+    else if (t.closest("#rmDrop") && !rmCrm().ready) { e.preventDefault(); rmAddFiles([]); }
     else if (t.closest("[data-rm-pick]")) { const inp = $("rmOne"); inp.dataset.kind = t.closest("[data-rm-pick]").dataset.rmPick; inp.click(); }
     else if (t.closest("[data-rm-del]")) { delete RM.files[t.closest("[data-rm-del]").dataset.rmDel]; RM.result = null; rmRender(); }
     else if (t.closest("#rmClear") || t.closest("#rmReset")) resetRea();
@@ -3598,7 +3620,7 @@ document.addEventListener("click", async (e) => {
     }
   } catch (ex) {
     if (t.closest("#rmExport")) { const el = $("rmExportMsg"); el.hidden = false; el.style.color = ""; el.textContent = ex.message; }
-    else if (t.closest("[id^=rm],[data-rm-pick],[data-rm-del]")) rmErr(ex.message || String(ex));
+    else if (t.closest("[id^=rm],[data-rm-pick],[data-rm-del],[data-rm-crm]")) rmErr(ex.message || String(ex));
   }
 });
 document.addEventListener("input", (e) => { if (e.target.id === "rmClient" && RM.result) { /* the name applies on the next run */ $("rmReady").textContent = "Client name changed: run again to use it."; } });

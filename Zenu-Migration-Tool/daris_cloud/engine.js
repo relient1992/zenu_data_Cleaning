@@ -1508,7 +1508,24 @@
     sale: "Listing Sale", lease: "Listing Lease", props: "Properties", contacts: "Contact ID", rea: "Office REA data",
   };
   /** Which REA-matching input a table is, from its columns (and file name as a tie-break), or "". */
-  function reaKind(columns, name) {
+  /** Source CRMs for REA matching. ready = built; the others show as coming later. slots = the input files, in order:
+   *  [kind, label, hint, need]. Add a CRM here (and its reaKind / reaMatch handling) to switch it on. */
+  const REA_CRMS = {
+    agentbox: { label: "Agentbox", ready: true, keyNote: "REA source_id = Agentbox rea_unique_id (Listing Sale first, then Listing Lease)",
+      slots: [
+        ["rea", "Office REA data", "listings.csv from the REA export", "required"],
+        ["sale", "Listing Sale", "listing_sale.csv", "sale or lease"],
+        ["lease", "Listing Lease", "listing_lease.csv", "sale or lease"],
+        ["props", "Properties", "property.csv · for addresses", "for addresses"],
+        ["contacts", "Contact ID", "Zenu ID map · copied into the workbook", "optional"],
+      ] },
+    rex: { label: "Rex", ready: false, slots: [] },
+    vaultre: { label: "VaultRE", ready: false, slots: [] },
+    eagle: { label: "Eagle", ready: false, slots: [] },
+  };
+  /** Which REA-matching input a table is for this CRM, from its columns (file name as a tie-break), or "". */
+  function reaKind(columns, name, crm = "agentbox") {
+    if (crm !== "agentbox") return "";
     const has = (c) => columns.some((x) => String(x).trim().toLowerCase() === c);
     const n = String(name || "").toLowerCase();
     if (has("source_contact_id") && has("contact_id")) return "contacts";
@@ -1552,6 +1569,9 @@
    * contacts is only carried through). Returns the sheets of the "REA Feed - <client> - Matching Results" workbook.
    */
   function reaMatch(frames, opts = {}) {
+    const crm = REA_CRMS[opts.crm || "agentbox"];
+    if (!crm) throw new Error(`Unknown CRM '${opts.crm}'.`);
+    if (!crm.ready) throw new Error(`REA matching for ${crm.label} isn't built yet. Only Agentbox works for now.`);
     const client = reaText(opts.client) || "Old Office";
     if (!frames.rea) throw new Error("Load the office's REA data (listings.csv from the REA export).");
     if (!frames.sale && !frames.lease) throw new Error("Load listing_sale and/or listing_lease from the old CRM export.");
@@ -1682,7 +1702,7 @@
       decodeComment, categoriesByContact, agentNames, teamMember1, build: buildAgentbox, linkNotes },
     toFrame, ROLE_HELP, aiFits, shape, isDataLike,
     importPrep: { run: importPrep, toCsv, clean: importPrepClean, stringify: importPrepStringify, MAX_ROWS: IP_MAX_ROWS },
-    reaMatch: { run: reaMatch, kind: reaKind, KINDS: REA_KINDS, withAddress: reaWithAddress },
+    reaMatch: { run: reaMatch, kind: reaKind, KINDS: REA_KINDS, CRMS: REA_CRMS, withAddress: reaWithAddress },
   };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.DarisEngine = api;
