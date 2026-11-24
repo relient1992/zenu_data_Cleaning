@@ -1526,7 +1526,9 @@
   /** Which REA-matching input a table is for this CRM, from its columns (file name as a tie-break), or "". */
   function reaKind(columns, name, crm = "agentbox") {
     if (crm !== "agentbox") return "";
-    const has = (c) => columns.some((x) => String(x).trim().toLowerCase() === c);
+    const norm = (x) => String(x).replace(/^\uFEFF/, "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+    const cols = new Set(columns.map(norm));
+    const has = (c) => cols.has(c);
     const n = String(name || "").toLowerCase();
     if (has("source_contact_id") && has("contact_id")) return "contacts";
     if (has("source_id") && has("listing_status")) return "rea";
@@ -1547,7 +1549,7 @@
   /** A row's value by column name, ignoring case and spaces (rea_unique_id = REA_UNIQUE_ID). */
   function reaGetter(columns) {
     const map = {};
-    columns.forEach((c) => { const k = String(c).trim().toLowerCase().replace(/[\s-]+/g, "_"); if (!(k in map)) map[k] = c; });
+    columns.forEach((c) => { const k = String(c).replace(/^\uFEFF/, "").trim().toLowerCase().replace(/[\s-]+/g, "_"); if (!(k in map)) map[k] = c; });
     return (row, col) => { const c = map[col]; return c === undefined ? "" : row[c]; };
   }
   const REA_UNIT_WORDS = new Set(["level", "lvl", "lv", "unit", "suite", "shop", "lot", "rear", "of", "ground", "floor", "apartment", "apt", "villa", "townhouse", "flat", "cnr", "corner"]);

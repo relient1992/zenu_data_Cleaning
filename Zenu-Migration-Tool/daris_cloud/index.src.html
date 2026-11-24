@@ -458,7 +458,7 @@ tr.gap td { text-align: center; color: var(--faint); font-size: 10.5px; letter-s
             <label class="drop" id="xpDrop">
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true" style="color:var(--holo)"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
               <strong>Load files</strong>
-              <span class="code">DROP FILES OR A FOLDER · CSV · XLSX · XLS</span>
+              <span class="code">DROP FILES OR A FOLDER · CSV · XLSX · XLS<//span>
               <input id="xpFiles" type="file" accept=".csv,.xlsx,.xls" multiple>
             </label>
             <input id="xpFolder" type="file" webkitdirectory multiple hidden>
@@ -491,11 +491,11 @@ tr.gap td { text-align: center; color: var(--faint); font-size: 10.5px; letter-s
             <label class="drop" id="rmDrop">
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true" style="color:var(--holo)"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
               <strong>Load files</strong>
-              <span class="code">DROP FILES OR A FOLDER · CSV · XLSX · XLS</span>
-              <input id="rmFiles" type="file" accept=".csv,.xlsx,.xls" multiple>
+              <span class="code">DROP FILES OR A FOLDER · CSV · XLSX · XLS · ZIP</span>
+              <input id="rmFiles" type="file" accept=".csv,.xlsx,.xls,.zip" multiple>
             </label>
             <input id="rmFolder" type="file" webkitdirectory multiple hidden>
-            <input id="rmOne" type="file" accept=".csv,.xlsx,.xls" hidden>
+            <input id="rmOne" type="file" accept=".csv,.xlsx,.xls,.zip" hidden>
             <div class="row-btns"><button class="btn tiny" id="rmFolderBtn" type="button">Load a folder</button></div>
             <p class="small" id="rmLoadMsg" style="margin:8px 0 0"></p>
             <div class="files" id="rmSlots"></div>
@@ -1969,11 +1969,12 @@ function rmMsg(t, bad) { const el = $("rmLoadMsg"); el.textContent = t || ""; el
 function rmErr(t) { const e = $("rmErr"); e.hidden = !t; e.textContent = t || ""; }
 /** Read files (or a folder) and put each table in its slot by its columns; force = the slot from Choose. */
 async function rmAddFiles(list, force) {
-  const items = Array.from(list || []).map((x) => (x instanceof File ? { file: x, path: x.webkitRelativePath || x.name } : x))
-    .filter((x) => /\.(csv|xlsx|xls)$/i.test(x.file.name) && !/^~\$/.test(x.file.name));
+  let items = Array.from(list || []).map((x) => (x instanceof File ? { file: x, path: x.webkitRelativePath || x.name } : x))
+    .filter((x) => /\.(csv|xlsx|xls|zip)$/i.test(x.file.name) && !/^~\$/.test(x.file.name));
   if (!rmCrm().ready) { rmMsg(`REA matching for ${rmCrm().label} isn't built yet. Choose Agentbox, or send a ${rmCrm().label} export and a matching results file so it can be added.`, true); return; }
-  if (!items.length) { rmMsg("No .csv, .xlsx or .xls files there.", true); return; }
+  if (!items.length) { rmMsg("No .csv, .xlsx, .xls or .zip files there.", true); return; }
   const found = {}, skipped = [], errs = [];
+  items = await rmUnzip(items, errs);
   for (const { file, path } of items) {
     rmMsg(`Reading ${file.name}…`);
     await new Promise((r) => setTimeout(r, 0));
@@ -1996,8 +1997,27 @@ async function rmAddFiles(list, force) {
   if (!$("rmClient").value.trim()) { const g = rmGuessClient(); if (g) $("rmClient").value = g; }
   rmRender();
   const got = Object.keys(found).map((k) => `${E.reaMatch.KINDS[k]} (${found[k].name})`);
-  rmMsg((got.length ? `Loaded ${got.join(", ")}.` : "None of those files is an REA-matching input.") +
+  const reaHint = !force && !RM.files.rea && skipped.length ? " The Office REA data file is the REA export's listings.csv: it needs source_id and listing_status columns." : "";
+  rmMsg((got.length ? `Loaded ${got.join(", ")}.` : "None of those files is an REA-matching input.") + reaHint +
     (skipped.length ? ` Not used: ${skipped.slice(0, 6).join(", ")}${skipped.length > 6 ? "…" : ""}.` : "") + (errs.length ? ` Couldn't read: ${errs.join("; ")}` : ""), !got.length);
+}
+/** Swap each .zip for the CSV / Excel files inside it (path "export.zip/listings.csv"). */
+async function rmUnzip(items, errs) {
+  const out = [];
+  for (const it of items) {
+    if (!/\.zip$/i.test(it.file.name)) { out.push(it); continue; }
+    if (!window.JSZip) { errs.push(`${it.file.name}: the ZIP reader didn't load - unzip it and load the files`); continue; }
+    try {
+      rmMsg(`Opening ${it.file.name}…`);
+      const zip = await JSZip.loadAsync(await it.file.arrayBuffer());
+      for (const en of Object.values(zip.files)) {
+        const base = en.name.split("/").pop();
+        if (en.dir || !/\.(csv|xlsx|xls)$/i.test(base) || /^~\$|^\._/.test(base) || /__MACOSX\//.test(en.name)) continue;
+        out.push({ file: new File([await en.async("blob")], base), path: `${it.path}/${en.name}` });
+      }
+    } catch (e) { errs.push(`${it.file.name}: ${e.message}`); }
+  }
+  return out;
 }
 /** "dataExport_mcconnell-bourn_2025…" or "REA Feed - Mcconnell - …" -> "Mcconnell" */
 function rmGuessClient() {
