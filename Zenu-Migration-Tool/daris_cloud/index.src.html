@@ -1965,7 +1965,7 @@ function showView(v) {
 }
 
 // =====================================================================
-// REA MATCHING (Agentbox): REA listings feed vs the old CRM's listing_sale / listing_lease
+// REA MATCHING: REA listings feed vs the old CRM's listings (Agentbox, Eagle, VaultRE)
 // =====================================================================
 const RM = { crm: "agentbox", files: {}, result: null, busy: false };
 const rmCrm = () => E.reaMatch.CRMS[RM.crm];
@@ -1986,9 +1986,10 @@ function rmErr(t) { const e = $("rmErr"); e.hidden = !t; e.textContent = t || ""
 async function rmAddFiles(list, force) {
   let items = Array.from(list || []).map((x) => (x instanceof File ? { file: x, path: x.webkitRelativePath || x.name } : x))
     .filter((x) => /\.(csv|xlsx|xls|zip)$/i.test(x.file.name) && !/^~\$/.test(x.file.name));
-  if (!rmCrm().ready) { rmMsg(`REA matching for ${rmCrm().label} isn't built yet. Choose Agentbox or Eagle, or send a ${rmCrm().label} export and a matching results file so it can be added.`, true); return; }
+  if (!rmCrm().ready) { rmMsg(`REA matching for ${rmCrm().label} isn't built yet. Choose Agentbox, Eagle or VaultRE, or send a ${rmCrm().label} export and a matching results file so it can be added.`, true); return; }
   if (!items.length) { rmMsg("No .csv, .xlsx, .xls or .zip files there.", true); return; }
   const found = {}, skipped = [], errs = [], crm = rmCrm(), merges = new Set(crm.merge || []);
+  if (crm.skip && !force) { skipped.push(...items.filter((x) => crm.skip.test(x.path)).map((x) => x.path)); items = items.filter((x) => !crm.skip.test(x.path)); }
   items = await rmUnzip(items, errs);
   if (crm.skip && !force) { const keep = items.filter((x) => !crm.skip.test(x.path)); skipped.push(...items.filter((x) => crm.skip.test(x.path)).map((x) => x.path)); items = keep; }
   for (const { file, path } of items) {
@@ -2065,6 +2066,7 @@ function rmReadyText() {
   if (miss.length) return `Load ${miss.join(" and ")}.`;
   if (RM.crm === "agentbox" && !f.props) return "Ready (no Properties: the old addresses and Address Check stay blank).";
   if (RM.crm === "eagle" && !f.eaddr) return "Ready (no Addresses: the Eagle suburbs and Address Check stay blank).";
+  if (RM.crm === "vaultre" && (!f.vprops || (!f.vsale && !f.vlease))) return "Ready (REA ID match only: load Properties and PropertyLifeSale / PropertyLifeLease to also match on the address).";
   return "Ready.";
 }
 function rmRender() {
@@ -2116,6 +2118,9 @@ function rmRenderResult() {
   if (st.sharedReaIds) notes.push(["INFO", `${fmt(st.sharedReaIds)} old listings share an REA ID with an earlier one; the first was used.`]);
   if (r.crm === "agentbox" && !RM.files.props) notes.push(["WARN", "No Properties file: the old addresses and Address Check are blank."]);
   if (r.crm === "eagle" && !RM.files.eaddr) notes.push(["WARN", "No Addresses file: the Eagle suburbs and Address Check are blank."]);
+  if (r.crm === "vaultre" && st.manualRan) notes.push(["INFO", `${fmt(st.noReaIdMatch)} listings had no REA ID match, so they were matched on the address (PropertyMatch): ${fmt(st.found)} found (a date agrees), ${fmt(st.potential)} potential (address only). The client confirms both tabs.`]);
+  if (r.crm === "vaultre" && !st.manualRan) notes.push(["WARN", "Only the REA ID match ran. Load Properties, PropertyLifeSale and PropertyLifeLease to also match the rest on the address."]);
+  if (r.crm === "vaultre" && st.settledFromManual) notes.push(["INFO", `${fmt(st.settledFromManual)} of the Sold to Settled rows come from the manual match tabs (Matched By), so they only apply once the client confirms those matches.`]);
   if (r.crm === "eagle" && st.manual) notes.push(["INFO", `${fmt(st.manual)} Eagle Sold listings have no REA match: they're on Listing Manual Creation to upload by hand${st.manualVendors === null ? " (load vendors.csv for their vendors)" : ""}${st.manualBuyers === null ? " (load purchasers.csv and contracts.csv for their buyers)" : ""}.`]);
   const sec = (title, rows, cols) => `<details class="group"><summary><span class="label">${esc(title)}</span><span class="code">${fmt(rows.length)} ROWS · FIRST 8</span></summary>${rmTable(rows, cols)}</details>`;
   el.hidden = false;
@@ -2124,14 +2129,16 @@ function rmRenderResult() {
       <div class="tile"><div class="k">Matched</div><div class="v hot">${fmt(st.matched)}</div></div>
       <div class="tile"><div class="k">Sold to Settled</div><div class="v">${fmt(st.settled)}</div></div>
       <div class="tile"><div class="k">Unable to match</div><div class="v ${st.unable ? "warn" : ""}">${fmt(st.unable)}</div></div>
-      ${r.crm === "eagle" ? `<div class="tile"><div class="k">Manual creation</div><div class="v">${fmt(st.manual)}</div></div>` : ""}</div>
+      ${r.crm === "eagle" ? `<div class="tile"><div class="k">Manual creation</div><div class="v">${fmt(st.manual)}</div></div>` : ""}
+      ${r.crm === "vaultre" && st.manualRan ? `<div class="tile"><div class="k">To confirm</div><div class="v">${fmt(st.found + st.potential)}</div></div>` : ""}</div>
     <ul class="issues">${notes.map(([s, d]) => `<li><span class="sev ${s}">${s}</span><span>${d}</span></li>`).join("")}</ul>
     <span class="label section-k">Summary</span>
     ${rmTable(r.summary.map((x) => ({ ...x, Description: x.Description.replace(/\n+/g, " "), "Action Needed": x["Action Needed"].replace(/\n+/g, " ") })), r.columns.summary)}
     ${sec("Sold to Settled", r.settled, r.columns.settled)}
     ${sec("Matched_By SourceID", r.matched, r.columns.matched)}
+    ${(r.extraSheets || []).filter((x) => x.before).map((x) => sec(x.name, x.rows, x.columns)).join("")}
     ${sec("Unable to match", r.unable, r.columns.unable)}
-    ${(r.extraSheets || []).map((x) => sec(x.name, x.rows, x.columns)).join("")}
+    ${(r.extraSheets || []).filter((x) => !x.before).map((x) => sec(x.name, x.rows, x.columns)).join("")}
     <div class="runbar"><div class="field"><label class="code" for="rmName">FILE NAME</label><input type="text" class="wide" id="rmName" value="${esc(rmFileName())}" style="width:min(100%,26rem)"></div>
       <div class="grow"><button class="btn primary" id="rmExport" type="button"${S.downloads ? "" : " disabled"}>Export workbook</button></div></div>
     <p class="err" id="rmExportMsg"${S.downloads ? " hidden" : ""}>${S.downloads ? "" : "Downloads aren't available in this view. Open the page in Claude to export."}</p>`;
@@ -2151,7 +2158,7 @@ async function xlStyled() {
   return XLS_LIB;
 }
 const RX = { rea: "C6E0B4", old: "FFE699", info: "D9E1F2", navy: "1F3864", ink: "1F1F1F", line: "BFBFBF", soft: "D9D9D9",
-  diff: "FCE4D6", red: "C00000", grey: "7F7F7F", ok: "375623", tabOk: "70AD47", tabNo: "ED7D31" };
+  diff: "FCE4D6", red: "C00000", grey: "7F7F7F", ok: "375623", tabOk: "70AD47", tabNo: "ED7D31", amber: "FFC000" };
 const rxBorder = (rgb = RX.line) => { const e = { style: "thin", color: { rgb } }; return { top: e, bottom: e, left: e, right: e }; };
 /** Text that is really a number ("2347946", "1250000") goes in as a number, so Excel shows no green "number stored as
  *  text" flags; leading zeros, IDs with letters and long codes stay text. dd/mm/yyyy in a date column -> a real date. */
@@ -2283,18 +2290,28 @@ async function rmExport(filename) {
     if (c === "Address Check" && v === "Different") return { fill: { patternType: "solid", fgColor: { rgb: RX.diff } }, font: { bold: true, color: { rgb: RX.red } } };
     if (c === "Address Check" && v && v !== "Same") return { font: { italic: true, color: { rgb: RX.grey } } };
     if (c === "Indicator" && v === "Matched") return { font: { color: { rgb: RX.ok } } };
+    if (c === "Match Status") return v === "Found" ? { font: { bold: true, color: { rgb: RX.ok } } } : { font: { italic: true, color: { rgb: RX.grey } } };
     return null;
   };
   const add = (name, ws, o) => { L.utils.book_append_sheet(wb, ws, name.slice(0, 31)); finish.push(o); };
   add("Summary", rxSummary(L, r, office), { grid: false, tab: RX.navy });
   add("Sold to Settled", rxSheet(L, r.columns.settled, r.settled, { fill }), { freeze: true, tab: RX.tabOk });
   add("Matched_By SourceID", rxSheet(L, r.columns.matched, r.matched, { fill, cellStyle: mark }), { freeze: true, tab: RX.tabOk });
+  for (const x of (r.extraSheets || []).filter((x) => x.before)) add(x.name, rxSheet(L, x.columns, x.rows, { fill, cellStyle: mark }), { freeze: true, tab: RX.amber });
   add("Unable to match", rxSheet(L, r.columns.unable, r.unable, { fill }), { freeze: true, tab: RX.tabNo });
-  for (const x of r.extraSheets || []) add(x.name, rxSheet(L, x.columns, x.rows, { fill: () => (x.fill === "old" ? RX.old : RX.info) }), { freeze: true, tab: RX.navy });
+  for (const x of (r.extraSheets || []).filter((x) => !x.before)) add(x.name, rxSheet(L, x.columns, x.rows, { fill: () => (x.fill === "old" ? RX.old : RX.info) }), { freeze: true, tab: RX.navy });
   if ($("rmInputs").checked && r.crm === "eagle") {
     const f = RM.files, raw = (k) => () => (k === "rea" ? RX.rea : RX.old);
     if (f.contacts) add("Contact ID", rxSheet(L, f.contacts.frame.columns, f.contacts.frame.rows, { fill: raw("contacts"), dates: false }), null);
     const p = E.reaMatch.eagleWithAddress(f.eprops.frame, f.eaddr && f.eaddr.frame); add(`${C} listing`, rxSheet(L, p.columns, p.rows, { fill: raw("eprops"), dates: false }), null);
+    const q = E.reaMatch.withAddress(f.rea.frame, "rea"); add(`${office ? office + " " : ""}REA data`, rxSheet(L, q.columns, q.rows, { fill: raw("rea"), dates: false }), null);
+  } else if ($("rmInputs").checked && r.crm === "vaultre") {
+    const f = RM.files, raw = (k) => () => (k === "rea" ? RX.rea : RX.old), copy = (k, name) => f[k] && add(name, rxSheet(L, f[k].frame.columns, f[k].frame.rows, { fill: raw(k), dates: false }), null);
+    copy("contacts", "Contact ID");
+    copy("vuniq", "PropertyLifeReaUniqueID");
+    if (f.vprops) { const p = E.reaMatch.vaultWithAddress(f.vprops.frame); add("Properties", rxSheet(L, p.columns, p.rows, { fill: raw("vprops"), dates: false }), null); }
+    copy("vsale", "PropertyLifeSale");
+    copy("vlease", "PropertyLifeLease");
     const q = E.reaMatch.withAddress(f.rea.frame, "rea"); add(`${office ? office + " " : ""}REA data`, rxSheet(L, q.columns, q.rows, { fill: raw("rea"), dates: false }), null);
   } else if ($("rmInputs").checked) {
     // copies of the inputs: header styled, values as they came (no date conversion), not post-processed (they're big)
@@ -2338,7 +2355,7 @@ const PROMPTS = [
   ["Ask about the data", ["How many contacts have no email?", "Which contacts have no mobile and no email?", "How many contacts are in each state?", "How many split people are there?"]],
   ["Questions about the data", ["In my last job, match zenu_buyer's property_identifier to listings.csv id and give the total sold price per state", "In my last job's zenu_buyer, which property_identifier has the highest property_sold_price?", "Top 10 vendors by price in the last job", "How many appraisals per suburb in the last job?", "Average sold price per state in zenu_buyer"]],
   ["Search & Export", ["Load the search example", "1001 with the contact name and properties attached", "Which files are loaded and how are they linked?", "Contacts in VIC with their properties", "Export the results"]],
-  ["REA Matching", ["What files does REA matching need?", "Which CRMs can REA matching do?", "What does Eagle REA matching need?", "Run the REA matching for Mcconnell", "How many matched and how many are Sold to Settled?", "Why are some REA listings unable to match?", "Export the REA matching workbook"]],
+  ["REA Matching", ["What files does REA matching need?", "Which CRMs can REA matching do?", "What does Eagle REA matching need?", "How does VaultRE manual matching work?", "Run the REA matching for Mcconnell", "How many matched and how many are Sold to Settled?", "Why are some REA listings unable to match?", "Export the REA matching workbook"]],
   ["Import Prep", ["How does Import Prep work?", "Run Import Prep on the example"]],
   ["Roadmap", ["Which CRMs are still in progress?"]],
 ];
@@ -2716,10 +2733,10 @@ function tools(m) {
         return xpResultForClaude(r);
       } },
     { name: "rea_matching", description: "The REA Matching tab: matches the office's REA listings (listings.csv from the REA export) to the old CRM's listings by REA ID " +
-        "(Agentbox: source_id = listing_sale / listing_lease rea_unique_id; Eagle: source_id = properties.csv rea_id; Appraisal, Property and no-status REA rows are out of scope) and builds the 'REA Feed - <client> - Matching Results' workbook: " +
-        "Summary, Sold to Settled (REA Sold + old 'settled'), Matched_By SourceID (with Address Check), Unable to match; Eagle adds Listing Manual Creation (Eagle Sold listings REA doesn't have) with its vendors and buyers. " +
+        "(Agentbox: source_id = listing_sale / listing_lease rea_unique_id; Eagle: source_id = properties.csv rea_id; VaultRE: source_id = PropertyLifeReaUniqueID UniqueID, then the rest matched on the address like the PropertyMatch macro; Appraisal, Property and no-status REA rows are out of scope) and builds the 'REA Feed - <client> - Matching Results' workbook: " +
+        "Summary, Sold to Settled (REA Sold + old 'settled'), Matched_By SourceID (with Address Check), Unable to match; Eagle adds Listing Manual Creation (Eagle Sold listings REA doesn't have) with its vendors and buyers; VaultRE adds To Confirm (Matched Found) and To Confirm (Potential Match) from the address match. " +
         "status: loaded files and the last run's counts. run: match (client = the client's name for the column names). export: save the workbook. " +
-        "crm picks the old CRM (agentbox and eagle work; rex, vaultre are coming later). The user loads the files in the tab. You get counts, never rows.",
+        "crm picks the old CRM (agentbox, eagle and vaultre work; rex is coming later). The user loads the files in the tab. You get counts, never rows.",
       inputSchema: { type: "object", properties: {
         action: { type: "string", enum: ["status", "run", "export"] },
         crm: { type: "string", enum: ["agentbox", "eagle", "rex", "vaultre"], description: "the old CRM; switching clears loaded files" },
@@ -2829,7 +2846,7 @@ How to work:
 - To give an export column a fixed value or fix values (e.g. CONTACT_TEAM_MEMBER_1 = an agent's name for all records, replace one value with another, fill blanks), use change_values, then tell the user how many cells changed and to export again. undo_changes reverses it.
 - Questions needing sorting, top / highest / lowest, totals, averages, min / max or counts per value: use query_data (never say you can't sort or rank). It reads every file: a job's outputs AND its export CSVs (source job), a PC folder, Search & Export files, Contact cleaning files. When the answer needs a column from another file (e.g. sold price per state: the buyer file has no state, listings.csv does), use join: list_files first if unsure which column holds the key, then join on it and group_by the joined column. Always say how many rows found a match in the joined file.
 - Search & Export tab (files the user loaded to look things up): use the explore tool. "ID X with the contact name and properties attached" = find with table = the contacts file, values = [X] (other linked files are attached by default; include limits them; attach = the name columns), then export when asked. The tab shows the user the rows; say what was found per file.
-- REA Matching tab (a client's REA listings feed vs its old CRM's listings): use rea_matching (status, run, export; crm picks the old CRM - Agentbox and Eagle are built, Rex / VaultRE are coming later: say so). For Eagle it needs listings.csv and the Eagle properties.csv (top-up properties files add to it); addresses.csv gives suburbs and the Address Check; vendors.csv, purchasers.csv and contracts.csv fill the Listing Manual Vendor / Buyer tabs. For Agentbox it needs the office's REA data (listings.csv) and listing_sale and/or listing_lease; property adds the old addresses; Contact ID is only copied into the workbook. Explain from the counts (matched by REA ID; unable to match = no old listing has that REA ID; Appraisal / Property REA rows are out of scope).
+- REA Matching tab (a client's REA listings feed vs its old CRM's listings): use rea_matching (status, run, export; crm picks the old CRM - Agentbox, Eagle and VaultRE are built, Rex is coming later: say so). For VaultRE it needs listings.csv and PropertyLifeReaUniqueID.csv (REA ID = UniqueID); Properties.csv, PropertyLifeSale.csv and PropertyLifeLease.csv add the manual address match for the rest: same unit + street number + street, suburb and postcode close, same sale / lease; Found = a listing or contract date within 32 days, Potential = address only; both tabs are for the client to confirm, and Sold to Settled marks which rows come from them. For Eagle it needs listings.csv and the Eagle properties.csv (top-up properties files add to it); addresses.csv gives suburbs and the Address Check; vendors.csv, purchasers.csv and contracts.csv fill the Listing Manual Vendor / Buyer tabs. For Agentbox it needs the office's REA data (listings.csv) and listing_sale and/or listing_lease; property adds the old addresses; Contact ID is only copied into the workbook. Explain from the counts (matched by REA ID; unable to match = no old listing has that REA ID; Appraisal / Property REA rows are out of scope).
 - "This job" / "this client" means open_job in the page summary (the job the user clicked in Recent jobs); the migration tool uses it when no job_id is given.
 - Migrations (Agentbox, Eagle, VaultRE, Rex, ZenuTransfer, General, MailingProspect) run on Daryl's PC through the DARVIS bridge with the Zenu Migration Tool's own engine; use the migration tool. Agentbox, Eagle and VaultRE need contact_cleaned.csv in the export folder (Contact cleaning -> Export contact_cleaned.csv). Start a run only when the user asks. When explaining a job, read job_status, job_log and the reconciliation, and quote numbers.
 

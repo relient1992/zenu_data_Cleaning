@@ -197,7 +197,7 @@ table's ID column (filled and unique, e.g. contact_id); change it under the tabl
   values only when "Let Claude read the rows I ask about" is ticked.
 - The files stay in the page (never uploaded) until you reload it or press Clear / say "clear search".
 
-## REA Matching (REA feed vs the old listings: Agentbox and Eagle)
+## REA Matching (REA feed vs the old listings: Agentbox, Eagle and VaultRE)
 
 The **REA Matching** tab builds the "REA Feed - <client> - Matching Results" workbook for an Agentbox or Eagle client.
 
@@ -235,6 +235,24 @@ The **REA Matching** tab builds the "REA Feed - <client> - Matching Results" wor
 - On Manning Valley this reproduced the team's workbook: 1,770 matched, 18 unable, 34 manual listings, 36 vendors, 40 buyers.
 
 **Eagle workbook sheets**: Summary, Sold to Settled, Matched_By SourceID, Unable to match, Listing Manual Creation, Listing Manual Vendor, Listing Manual Buyer, then (if ticked) Contact ID, <client> listing (properties with Property Address) and <office> REA data.
+
+### VaultRE
+**Input files** (drop the VaultRE raw export folder: Contacts, ContactNotes.zip, the notes, photos, tags and buyer-requirement files are skipped without being read or unzipped):
+- **Office REA data**: listings.csv from the REA export (required).
+- **PropertyLifeReaUniqueID**: PropertyLifeReaUniqueID.csv (required). Its UniqueID is the REA ID: L + sale life id, R + lease life id, or the id REA was first given (VRP..., digits).
+- **Properties**, **PropertyLifeSale**, **PropertyLifeLease**: for the addresses, statuses and dates, and for the manual match. Without them only the REA ID match runs.
+- **Contact ID**: the Zenu ID map. Only copied into the workbook.
+
+**How VaultRE matches**
+- **Matched** = the REA source_id equals a UniqueID. The VaultRE columns are the sale / lease life id, PropertyID, status, Sale/Lease, the property address, Listed Date (AuthorityStart) and Contract Date (ConditionalActioned). VaultRE exports no leased date.
+- **Sold to Settled**: REA Sold and VaultRE Settled; Settled Date = SettlementActioned (else Settlement). Matched By says whether the row is an REA ID match or comes from a manual match tab (those apply only once the client confirms the match).
+- **Manual match** (the PropertyMatch 2.0 macro), for every REA listing with no REA ID match, against the VaultRE listings not already matched (prospects and appraisals left out):
+  - the address must agree: unit + street number + street name the same (letters and digits only, case and leading zeros ignored), one suburb inside the other, and the whole address with postcode at least 75% alike; and the same sale / lease (anything REA doesn't call Lease is a sale).
+  - **Found** = the REA listed date is within 32 days of AuthorityStart, or (sales) the contract date within 32 days of ConditionalActioned. **Potential** = the address only.
+  - Matched On lists what else agrees: display price, sold price, rent per week, status (Sold = Settled, Leased = Management/Listing, Withdrawn = Withdrawn Listing / Appraisal ...), property type and category. With several candidates the one with the most agreeing fields wins; the others are in Other Possible IDs.
+- On Harcourts Craigieburn: all 984 of the team's REA ID matches (plus 109 the workbook lost: 1,003 REA rows were missing from it, every other row from row 3,322 on), and on the team's 4,664 manual-match rows 679 / 679 Found and 378 / 382 Potential the same; 16 more found that the macro missed (Excel had turned street numbers like 2-8 into dates, or the AB file had lost the unit).
+
+**VaultRE workbook sheets**: Summary, Sold to Settled, Matched_By SourceID, To Confirm (Matched Found), To Confirm (Potential Match), Unable to match (no match by REA ID or address), then (if ticked) Contact ID, PropertyLifeReaUniqueID, Properties (with Full Address), PropertyLifeSale, PropertyLifeLease and <office> REA data.
 
 ## Import Prep
 Replicates the Import Prep macro's "Internal Output". Give it the input file (xlsx or csv) and the

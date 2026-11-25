@@ -1507,6 +1507,7 @@
   const REA_KINDS = {
     sale: "Listing Sale", lease: "Listing Lease", props: "Properties", contacts: "Contact ID", rea: "Office REA data",
     eprops: "Eagle properties", eaddr: "Addresses", evendors: "Vendors", epurch: "Purchasers", econtracts: "Contracts",
+    vuniq: "PropertyLifeReaUniqueID", vprops: "VaultRE properties", vsale: "PropertyLifeSale", vlease: "PropertyLifeLease",
   };
   /** Which REA-matching input a table is, from its columns (and file name as a tie-break), or "". */
   /** Source CRMs for REA matching. ready = built; the others show as coming later. slots = the input files, in order:
@@ -1522,7 +1523,18 @@
         ["contacts", "Contact ID", "Zenu ID map · copied into the workbook", "optional"],
       ] },
     rex: { label: "Rex", ready: false, slots: [] },
-    vaultre: { label: "VaultRE", ready: false, slots: [] },
+    vaultre: { label: "VaultRE", ready: true, keyNote: "REA source_id = VaultRE PropertyLifeReaUniqueID.UniqueID; the rest are matched on the address (PropertyMatch)",
+      need: [["rea"], ["vuniq"]],
+      // big VaultRE files REA matching never uses: not read when a whole export folder is loaded
+      skip: /(^|[\\/])(\d+\s*)?(contacts|contactnotes|buyrentrequirements[^\\/]*|contactcategorymapping|contacteditaccess|contactviewaccess|contactmarketinguser|calendarevents|feedbacknotes|salenotes|propertynotes|propertyphotos|propertytags|propertyevents|tasks)\.(csv|zip)$/i,
+      slots: [
+        ["rea", "Office REA data", "listings.csv from the REA export", "required"],
+        ["vuniq", "PropertyLifeReaUniqueID", "PropertyLifeReaUniqueID.csv · the REA IDs", "required"],
+        ["vprops", "Properties", "Properties.csv · addresses, for the manual match", "for manual match"],
+        ["vsale", "PropertyLifeSale", "PropertyLifeSale.csv · sale listings", "for manual match"],
+        ["vlease", "PropertyLifeLease", "PropertyLifeLease.csv · lease listings", "for manual match"],
+        ["contacts", "Contact ID", "Zenu ID map · copied into the workbook", "optional"],
+      ] },
     eagle: { label: "Eagle", ready: true, keyNote: "REA source_id = Eagle rea_id (properties.csv, top-up files included)",
       need: [["rea"], ["eprops"]],
       // several files fill one slot (the main export plus top-ups): rows are added, a repeated id only once
@@ -1555,6 +1567,13 @@
       const small = cols.size <= 6;
       if (small && has("contact_id") && has("contract_id")) return "epurch";
       if (small && has("contact_id") && has("property_id") && !has("appraisal_id") && !has("agent_id") && !has("address_id")) return "evendors";
+      return "";
+    }
+    if (crm === "vaultre") {
+      if (has("uniqueid") && has("propertyid") && (has("salelifeid") || has("leaselifeid"))) return "vuniq";
+      if (has("propertyid") && has("streetnum") && has("street") && has("suburb")) return "vprops";
+      if (has("salelifeid") && has("status") && !has("propertyid") && (has("conditionalactioned") || has("saleprice"))) return "vsale";
+      if (has("leaselifeid") && has("status") && !has("propertyid") && (has("baserentfrequency") || has("managerid") || has("baserent"))) return "vlease";
       return "";
     }
     if (has("rea_unique_id") && (has("settled_date") || has("sold_price") || has("contract_date"))) return "sale";
@@ -1598,8 +1617,9 @@
   function reaMatch(frames, opts = {}) {
     const crm = REA_CRMS[opts.crm || "agentbox"];
     if (!crm) throw new Error(`Unknown CRM '${opts.crm}'.`);
-    if (!crm.ready) throw new Error(`REA matching for ${crm.label} isn't built yet. Only Agentbox and Eagle work for now.`);
+    if (!crm.ready) throw new Error(`REA matching for ${crm.label} isn't built yet. Agentbox, Eagle and VaultRE work for now.`);
     if (opts.crm === "eagle") return reaMatchEagle(frames, opts);
+    if (opts.crm === "vaultre") return reaMatchVault(frames, opts);
     const client = reaText(opts.client) || "Old Office";
     if (!frames.rea) throw new Error("Load the office's REA data (listings.csv from the REA export).");
     if (!frames.sale && !frames.lease) throw new Error("Load listing_sale and/or listing_lease from the old CRM export.");
@@ -1673,7 +1693,7 @@
     const summary = [
       { "Sheet Name": "Matched", "# of items": matched.length,
         Description: `A confirmed match between your old office and REA Extract can be found for the in-scope listings that have come through from REA. Matched based on REA ID.` +
-          (different ? `\n\nPlease note that there are ${different} listings that matched with REA ID but have a different address. Please highlight anything you would like to remove from the list.` : ""),
+          (different ? `\n\nPlease note that ${different === 1 ? "there is 1 listing that matched with REA ID but has" : `there are ${different} listings that matched with REA ID but have`} a different address. Please highlight anything you would like to remove from the list.` : ""),
         "Action Needed": "Once approved. We will proceed to attach the corresponding data like vendor/purchaser to these REA listings." },
       { "Sheet Name": "Sold to Settled", "# of items": settled.length,
         Description: `Out of the matched Sold properties, these are the ones that are in 'Settled' status in your old database\n\nWe will be updating these to 'Settled' status in Zenu.`,
@@ -1867,7 +1887,7 @@
     const summary = [
       { "Sheet Name": "Matched", "# of items": matched.length,
         Description: `A confirmed match between your Eagle data and the listings that have come through from REA. Matched based on the REA ID: the REA source ID against the Eagle REA ID.` +
-          (different ? `\n\nPlease note that there are ${different} listings that matched with REA ID but have a different address. Please highlight anything you would like to remove from the list.` : ""),
+          (different ? `\n\nPlease note that ${different === 1 ? "there is 1 listing that matched with REA ID but has" : `there are ${different} listings that matched with REA ID but have`} a different address. Please highlight anything you would like to remove from the list.` : ""),
         "Action Needed": "No action needed from you. We will proceed to attach the corresponding data like enquiries, vendors and purchasers to these REA listings." },
       { "Sheet Name": "Sold to Settled", "# of items": settled.length,
         Description: settled.length ? `Out of the matched Sold properties, these are the ones that are in 'Settled' status in your old database\n\nWe will be updating these to 'Settled' status in Zenu.`
@@ -1894,6 +1914,246 @@
         summary: ["Sheet Name", "# of items", "Description", "Action Needed"],
       },
     };
+  }
+
+  // ---------------------------------------------------------------------
+  // VaultRE: REA source_id = PropertyLifeReaUniqueID.UniqueID ("L20957707" sale life, "R4067535" lease life, or the
+  // id REA was first given). REA listings with no REA ID match then go through the manual match (the PropertyMatch
+  // macro): the same unit + street number + street, suburb and postcode close, same sale / lease - then dates decide.
+  // ---------------------------------------------------------------------
+  /** VaultRE dates: "2017-07-31" / "2017-07-31 08:00:23"; "0000-00-00" is no date. */
+  const vaultDate = (v) => { const s = reaText(v); return !s || /^0000/.test(s) ? "" : reaDate(s.slice(0, 10)); };
+  /** dd/mm/yyyy -> day number, for the 32-day window. */
+  const vaultDay = (dmy) => { const m = String(dmy || "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/); return m ? Date.UTC(+m[3], +m[2] - 1, +m[1]) / 864e5 : null; };
+  const vaultNear = (a, b) => { const x = vaultDay(a), y = vaultDay(b); return x !== null && y !== null && Math.abs(x - y) <= 32; };
+  /** Letters and digits only, lower case, leading zeros off ("05" -> "5"): how the macro compares address parts. */
+  const vaultPart = (v, num) => { let s = reaText(v).toLowerCase().replace(/[^a-z0-9]+/g, ""); if (num && /^0+[1-9a-z]/.test(s)) s = s.replace(/^0+/, ""); return s; };
+  const vaultUnitStreet = (unit, num, street) => vaultPart(unit, true) + vaultPart(num, true) + vaultPart(street);
+  /** Levenshtein similarity in %, against the shorter text (as the macro scores it). */
+  function vaultSimilar(a, b) {
+    if (a === b) return 100;
+    const s = a.length <= b.length ? a : b, l = a.length <= b.length ? b : a;
+    if (!s.length) return 0;
+    let prev = Array.from({ length: l.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= s.length; i++) {
+      const cur = [i];
+      for (let j = 1; j <= l.length; j++) cur[j] = s[i - 1] === l[j - 1] ? prev[j - 1] : 1 + Math.min(prev[j], cur[j - 1], prev[j - 1]);
+      prev = cur;
+    }
+    return 100 - (prev[l.length] * 100) / s.length;
+  }
+  const vaultNum = (v) => { const n = parseFloat(reaText(v).replace(/[$,\s]/g, "")); return isFinite(n) && n > 0 ? n : null; };
+  /** REA status -> the VaultRE statuses that agree with it (only adds a "Status" point; dates decide Found). */
+  const VAULT_STATUS = {
+    sold: ["settled", "unconditional", "conditional"], leased: ["management/listing"], withdrawn: ["withdrawn listing", "withdrawn appraisal"],
+    "on market": ["listing", "management/listing"], "under contract": ["conditional", "unconditional", "fallen sale"],
+  };
+  /** VaultRE lives the manual match never offers: prospects (a property record, not a listing) and appraisals. */
+  const VAULT_NOT_LISTING = new Set(["prospect/not currently listed", "appraisal"]);
+  const VAULT_MATCH_FIELDS = ["Listing Date", "Contract Date", "Display Price", "Sold Price", "Rent/Wk", "Status", "Property Type", "Category"];
+
+  /** Every VaultRE sale / lease life: id, property, status and the dates and prices the matching compares. */
+  function vaultLives(frames) {
+    const props = new Map();
+    if (frames.vprops) {
+      const P = reaGetter(frames.vprops.columns);
+      for (const row of frames.vprops.rows) {
+        const id = reaKey(P(row, "propertyid"));
+        if (!id || props.has(id)) continue;
+        const unit = reaText(P(row, "unit")), num = reaText(P(row, "streetnum"));
+        // some streets repeat the number ("43" + "43 Laurel Crescent")
+        let street = reaText(P(row, "street"));
+        if (num && street.toLowerCase().startsWith(num.toLowerCase() + " ")) street = street.slice(num.length).trim();
+        const suburb = reaText(P(row, "suburb")), state = reaText(P(row, "state")), postcode = reaText(P(row, "postcode"));
+        props.set(id, { unit, num, street, suburb, state, postcode, type: reaText(P(row, "type")), category: reaText(P(row, "class")),
+          address: reaJoin(" ", [reaJoin(", ", [reaJoin(" ", [unit, num, street]), suburb, state]), postcode]),
+          us: vaultUnitStreet(unit, num, street), key: reaStreetKey(reaJoin(" ", [unit, num, street]), suburb) });
+      }
+    }
+    const lifeProp = new Map(), lives = new Map();
+    const U = reaGetter(frames.vuniq.columns);
+    for (const row of frames.vuniq.rows) {
+      const sid = reaKey(U(row, "salelifeid")), lid = reaKey(U(row, "leaselifeid"));
+      const pid = reaText(U(row, "propertyid"));
+      if (sid && !lifeProp.has("s" + sid)) lifeProp.set("s" + sid, pid);
+      if (lid && !lifeProp.has("l" + lid)) lifeProp.set("l" + lid, pid);
+    }
+    for (const kind of ["sale", "lease"]) {
+      const f = frames[kind === "sale" ? "vsale" : "vlease"];
+      if (!f) continue;
+      const G = reaGetter(f.columns), idCol = kind === "sale" ? "salelifeid" : "leaselifeid";
+      for (const row of f.rows) {
+        const id = reaKey(G(row, idCol));
+        if (!id || lives.has(kind[0] + id)) continue;
+        const pid = lifeProp.get(kind[0] + id) || "";
+        lives.set(kind[0] + id, {
+          id: reaText(G(row, idCol)), kind, pid, prop: props.get(reaKey(pid)) || null, status: reaText(G(row, "status")),
+          listed: vaultDate(G(row, "authoritystart")), contract: kind === "sale" ? vaultDate(G(row, "conditionalactioned")) : "",
+          settled: kind === "sale" ? vaultDate(G(row, "settlementactioned")) || vaultDate(G(row, "settlement")) : "",
+          price: reaText(G(row, "pricetext")), sold: kind === "sale" ? vaultNum(G(row, "saleprice")) : null,
+          rentFrom: kind === "lease" ? vaultNum(G(row, "publishpricefrom")) : null, rentTo: kind === "lease" ? vaultNum(G(row, "publishpriceto")) : null,
+        });
+      }
+    }
+    return { props, lifeProp, lives };
+  }
+
+  function reaMatchVault(frames, opts = {}) {
+    const C = reaText(opts.client) || "Old Office";
+    if (!frames.rea) throw new Error("Load the office's REA data (listings.csv from the REA export).");
+    if (!frames.vuniq) throw new Error("Load PropertyLifeReaUniqueID.csv from the VaultRE export.");
+    const R = reaGetter(frames.rea.columns), U = reaGetter(frames.vuniq.columns);
+    const { props, lives } = vaultLives(frames);
+    // UniqueID -> life; the first row wins a shared id
+    const byUid = new Map();
+    let sharedIds = 0;
+    for (const row of frames.vuniq.rows) {
+      const k = reaKey(U(row, "uniqueid"));
+      if (!k) continue;
+      if (byUid.has(k)) { sharedIds++; continue; }
+      const sid = reaKey(U(row, "salelifeid")), lid = reaKey(U(row, "leaselifeid"));
+      byUid.set(k, { uid: reaText(U(row, "uniqueid")), kind: sid ? "sale" : "lease", lifeId: reaText(U(row, "salelifeid")) || reaText(U(row, "leaselifeid")),
+        pid: reaText(U(row, "propertyid")), life: lives.get(sid ? "s" + sid : "l" + lid) || null });
+    }
+    const vaultCols = (life, kind, lifeId, pid) => {
+      const prop = (life && life.prop) || props.get(reaKey(pid)) || null;
+      return {
+        [`${C} Listing ID`]: lifeId, [`${C} Property ID`]: pid, [`${C} Status`]: life ? life.status : "", [`${C} Sale/Lease`]: kind === "sale" ? "Sale" : "Lease",
+        [`${C} Property Address`]: prop ? prop.address : "", [`${C} Listed Date`]: life ? life.listed : "", [`${C} Contract Date`]: life ? life.contract : "",
+      };
+    };
+    const reaCols = (row, info, status) => ({
+      "REA ID": reaText(R(row, "id")), "REA SOURCE_ID": reaText(R(row, "source_id")), "REA LISTING_STATUS": status,
+      "REA SALE_METHOD": reaText(R(row, "sale_method")), "REA Full Address": info.address,
+      "REA Extracted Listed Date": info.listed, "REA Extracted Contract Date": info.contract, "REA Extracted Leased Date": info.leased,
+    });
+    const matched = [], settled = [], noId = [], outOfScope = {}, claimed = new Set();
+    let different = 0, noSettledDate = 0, blankSource = 0;
+    const addSettled = (row, status, life, by) => {
+      if (status.toLowerCase() !== "sold" || !life || life.status.toLowerCase() !== "settled") return;
+      if (!life.settled) noSettledDate++;
+      settled.push({ "REA ID": reaText(R(row, "id")), "REA SOURCE_ID": reaText(R(row, "source_id")), "REA LISTING_STATUS": status, [`${C} Status`]: life.status,
+        [`${C} Listing ID`]: life.id, [`${C} Property ID`]: life.pid, "Settled Date": life.settled, "Matched By": by });
+    };
+    for (const row of frames.rea.rows) {
+      const status = reaText(R(row, "listing_status"));
+      const out = reaOutOfScope(status);
+      if (out) { outOfScope[out] = (outOfScope[out] || 0) + 1; continue; }
+      const src = reaKey(R(row, "source_id"));
+      if (!src) blankSource++;
+      const hit = src ? byUid.get(src) : null;
+      if (!hit) { noId.push(row); continue; }
+      const info = reaRowInfo(R, row), life = hit.life;
+      claimed.add(hit.kind[0] + reaKey(hit.lifeId));
+      const prop = (life && life.prop) || props.get(reaKey(hit.pid)) || null;
+      const reaStreet = reaStreetKey(reaJoin(" ", [R(row, "unit_number"), R(row, "street_number"), R(row, "street_name")]), R(row, "suburb"));
+      const check = !frames.vprops ? "" : !prop ? `No property in ${C}` : prop.key && reaStreet && prop.key === reaStreet ? "Same" : "Different";
+      if (check === "Different") different++;
+      const v = vaultCols(life, hit.kind, hit.lifeId, hit.pid);
+      matched.push(Object.assign({ Indicator: "Matched" }, reaCols(row, info, status), v, { [`${C} REA ID`]: hit.uid, "Address Check": check }));
+      addSettled(row, status, life, "REA ID");
+    }
+    // ---- manual match (PropertyMatch macro) on the REA listings with no REA ID match ----
+    const canManual = !!(frames.vprops && (frames.vsale || frames.vlease));
+    const found = [], potential = [], unable = [];
+    const byStreet = new Map();
+    if (canManual) {
+      for (const [k, life] of lives) {
+        if (claimed.has(k) || !life.prop || !life.prop.us || VAULT_NOT_LISTING.has(life.status.toLowerCase())) continue;
+        if (!byStreet.has(life.prop.us)) byStreet.set(life.prop.us, []);
+        byStreet.get(life.prop.us).push(life);
+      }
+    }
+    for (const row of noId) {
+      const status = reaText(R(row, "listing_status")), info = reaRowInfo(R, row);
+      const us = vaultUnitStreet(R(row, "unit_number"), R(row, "street_number"), R(row, "street_name"));
+      const suburb = reaText(R(row, "suburb")).toLowerCase(), postcode = reaText(R(row, "postcode")).toLowerCase();
+      const isLease = reaText(R(row, "sale_method")).toLowerCase() === "lease";
+      const cands = [];
+      for (const life of (canManual && us && byStreet.get(us)) || []) {
+        const p = life.prop, ps = p.suburb.toLowerCase();
+        // suburb: one inside the other (Lane Cove / Lane Cove North), then the whole address at least 75% alike
+        if (!suburb || !ps || !(ps.includes(suburb) || suburb.includes(ps))) continue;
+        if (vaultSimilar(us + suburb + postcode, p.us + ps + p.postcode.toLowerCase()) < 75) continue;
+        if ((life.kind === "lease") !== isLease) continue;
+        const on = [];
+        if (vaultNear(info.listed, life.listed)) on.push("Listing Date");
+        if (!isLease && vaultNear(info.contract, life.contract)) on.push("Contract Date");
+        const dated = on.length > 0;
+        const dp = reaText(R(row, "display_price")).toLowerCase();
+        if (dp && dp === life.price.toLowerCase()) on.push("Display Price");
+        if (!isLease) { const s = vaultNum(R(row, "sold_price")); if (s && life.sold && s === life.sold) on.push("Sold Price"); }
+        if (isLease) {
+          const r = vaultNum(R(row, "rentals_rent_pw"));
+          if (r && life.rentFrom && (r === life.rentFrom || (life.rentTo && life.rentTo > life.rentFrom && r >= life.rentFrom && r <= life.rentTo))) on.push("Rent/Wk");
+        }
+        if ((VAULT_STATUS[status.toLowerCase()] || []).includes(life.status.toLowerCase())) on.push("Status");
+        const pt = reaText(R(row, "property_type")).toLowerCase(), cat = reaText(R(row, "category")).toLowerCase();
+        if (pt && pt === p.type.toLowerCase()) on.push("Property Type");
+        if (cat && cat === p.category.toLowerCase()) on.push("Category");
+        cands.push({ life, on, dated, score: on.length });
+      }
+      if (!cands.length) { unable.push(reaUnableRow(R, row)); continue; }
+      const anyDated = cands.some((c) => c.dated);
+      // best: a dated candidate first, then the most fields agreeing; ties keep the first (lowest VaultRE id)
+      const pool = anyDated ? cands.filter((c) => c.dated) : cands;
+      const best = pool.reduce((a, c) => (c.score > a.score ? c : a));
+      const others = (anyDated ? pool.filter((c) => c !== best && c.score === best.score) : cands.filter((c) => c !== best)).map((c) => c.life.id);
+      const rec = Object.assign({ "Match Status": anyDated ? "Found" : "Potential Match", "Matched On": best.on.join(", ") }, reaCols(row, info, status),
+        vaultCols(best.life, best.life.kind, best.life.id, best.life.pid), { "Other Possible IDs": others.join(", ") });
+      (anyDated ? found : potential).push(rec);
+      addSettled(row, status, best.life, anyDated ? "Manual match (Found)" : "Manual match (Potential)");
+    }
+    const vcols = [`${C} Listing ID`, `${C} Property ID`, `${C} Status`, `${C} Sale/Lease`, `${C} Property Address`, `${C} Listed Date`, `${C} Contract Date`];
+    const reaColNames = ["REA ID", "REA SOURCE_ID", "REA LISTING_STATUS", "REA SALE_METHOD", "REA Full Address", "REA Extracted Listed Date", "REA Extracted Contract Date", "REA Extracted Leased Date"];
+    const manualCols = ["Match Status", "Matched On", ...reaColNames, ...vcols, "Other Possible IDs"];
+    const extraSheets = canManual ? [
+      { name: "To Confirm (Matched Found)", key: "found", rows: found, columns: manualCols, fill: "old", before: true },
+      { name: "To Confirm (Potential Match)", key: "potential", rows: potential, columns: manualCols, fill: "old", before: true },
+    ] : [];
+    const fromSettled = (by) => settled.filter((s) => s["Matched By"] === by).length;
+    const summary = [
+      { "Sheet Name": "Matched", "# of items": matched.length,
+        Description: `A confirmed match between your VaultRE data and the listings that have come through from REA. Matched on your PropertyLifeReaUniqueID file against the REA source ID: an exact match on this reference.` +
+          (different ? `\n\nPlease note that ${different === 1 ? "there is 1 listing that matched with REA ID but has" : `there are ${different} listings that matched with REA ID but have`} a different address. Please highlight anything you would like to remove from the list.` : ""),
+        "Action Needed": "No action needed from you. We will attach the corresponding data like vendors, purchasers and enquiries to these REA listings." },
+      { "Sheet Name": "Sold to Settled", "# of items": settled.length,
+        Description: `Out of the matched Sold properties, these are the ones that are in 'Settled' status in your old database.\n\nWe will be updating these to 'Settled' status in Zenu.` +
+          (canManual && settled.length > fromSettled("REA ID") ? `\n\n${fromSettled("REA ID")} are REA ID matches; ${settled.length - fromSettled("REA ID")} come from the manual match tabs (see Matched By) and only apply once you confirm those matches.` : ""),
+        "Action Needed": "Please let us know if any of these are awaiting settlement and should stay 'Sold' in Zenu." + (noSettledDate ? `\n${noSettledDate} listings have NO settlement date. Please fill these in if you want them to be updated.` : "") },
+    ];
+    if (canManual) summary.push(
+      { "Sheet Name": "To Confirm (Matched Found)", "# of items": found.length,
+        Description: "These REA listings had no REA ID match, so we matched them on the address (same unit, street number, street and suburb, and sale / lease). A listing or contract date also agrees within 32 days. Matched On lists what else agrees.",
+        "Action Needed": "Please confirm you want these matches, so we can attach the data like vendors and purchasers to them." },
+      { "Sheet Name": "To Confirm (Potential Match)", "# of items": potential.length,
+        Description: "These REA listings match a VaultRE listing on the address and sale / lease only: no listing or contract date agrees. Other Possible IDs lists any other VaultRE listings at the same address.",
+        "Action Needed": "Please check and confirm the ones you want matched." });
+    summary.push({ "Sheet Name": "Unable to match", "# of items": unable.length,
+      Description: canManual ? "No match found for these REA listings, by REA ID or by address." : "No match found for these REA listings using your PropertyLifeReaUniqueID file. Load Properties, PropertyLifeSale and PropertyLifeLease to also match them on the address.",
+      "Action Needed": `No action needed from you. Please note that we will NOT be able to attach any old ${C} data to these.` });
+    const reaRows = frames.rea.rows.length, inScope = matched.length + noId.length;
+    return {
+      crm: "vaultre", client: C, summary, matched, settled, unable, extraSheets,
+      stats: { reaRows, inScope, outOfScope, matched: matched.length, settled: settled.length, unable: unable.length, differentAddress: different, noSettledDate,
+        blankSourceId: blankSource, oldListings: byUid.size, sharedReaIds: sharedIds, noReaIdMatch: noId.length, manualRan: canManual,
+        found: found.length, potential: potential.length, settledFromManual: settled.length - fromSettled("REA ID"), vaultLives: lives.size },
+      columns: {
+        matched: ["Indicator", ...reaColNames, `${C} Listing ID`, `${C} Property ID`, `${C} REA ID`, `${C} Status`, `${C} Sale/Lease`, `${C} Property Address`, `${C} Listed Date`, `${C} Contract Date`, "Address Check"],
+        settled: ["REA ID", "REA SOURCE_ID", "REA LISTING_STATUS", `${C} Status`, `${C} Listing ID`, `${C} Property ID`, "Settled Date", "Matched By"],
+        unable: REA_UNABLE_COLUMNS,
+        summary: ["Sheet Name", "# of items", "Description", "Action Needed"],
+      },
+    };
+  }
+
+  /** VaultRE Properties with "Full Address" after the property id, as the results workbook's property tab shows it. */
+  function vaultWithAddress(frame) {
+    const G = reaGetter(frame.columns);
+    const columns = frame.columns.slice();
+    const at = columns.findIndex((c) => String(c).replace(/^﻿/, "").trim().toLowerCase() === "propertyid");
+    columns.splice(at < 0 ? 0 : at + 1, 0, "Full Address");
+    return { columns, rows: frame.rows.map((row) => ({ ...row, "Full Address": reaJoin(" ", [reaJoin(", ", [reaJoin(" ", [G(row, "unit"), G(row, "streetnum"), G(row, "street")]), G(row, "suburb"), G(row, "state")]), G(row, "postcode")]) })) };
   }
 
   /** Eagle properties with "Property Address" after id, as the results workbook's listing tab shows it. */
@@ -1929,7 +2189,7 @@
       decodeComment, categoriesByContact, agentNames, teamMember1, build: buildAgentbox, linkNotes },
     toFrame, ROLE_HELP, aiFits, shape, isDataLike,
     importPrep: { run: importPrep, toCsv, clean: importPrepClean, stringify: importPrepStringify, MAX_ROWS: IP_MAX_ROWS },
-    reaMatch: { run: reaMatch, kind: reaKind, KINDS: REA_KINDS, CRMS: REA_CRMS, withAddress: reaWithAddress, eagleWithAddress, eagleDate },
+    reaMatch: { run: reaMatch, kind: reaKind, KINDS: REA_KINDS, CRMS: REA_CRMS, withAddress: reaWithAddress, eagleWithAddress, eagleDate, vaultWithAddress },
   };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.DarisEngine = api;
