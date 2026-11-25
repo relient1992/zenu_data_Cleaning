@@ -1281,7 +1281,7 @@ async function saveFile(filename, data) {
  *  description, control codes, half emoji): Excel then "repairs" the file and empties that sheet. Drop them, and cut
  *  any cell over Excel's 32,767-character limit. */
 const XL_BAD = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
-function xlWrite(wb, opts) {
+function xlWrite(wb, opts, lib = XLSX) {
   for (const ws of Object.values(wb.Sheets)) {
     for (const [ref, cell] of Object.entries(ws)) {
       if (ref[0] === "!" || !cell || typeof cell.v !== "string") continue;
@@ -1290,7 +1290,7 @@ function xlWrite(wb, opts) {
       if (v !== cell.v) { cell.v = v; delete cell.w; delete cell.h; }
     }
   }
-  return XLSX.write(wb, Object.assign({ bookType: "xlsx", type: "array" }, opts));
+  return lib.write(wb, Object.assign({ bookType: "xlsx", type: "array" }, opts));
 }
 async function exportWorkbook() {
   const r = S.result;
@@ -2115,35 +2115,173 @@ function rmRenderResult() {
       <div class="grow"><button class="btn primary" id="rmExport" type="button"${S.downloads ? "" : " disabled"}>Export workbook</button></div></div>
     <p class="err" id="rmExportMsg"${S.downloads ? " hidden" : ""}>${S.downloads ? "" : "Downloads aren't available in this view. Open the page in Claude to export."}</p>`;
 }
+/* ---- client-ready REA workbook: styled headers, real dates and numbers, frozen header row, Summary cover ---- */
+const XLS_URL = "https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js";
+let XLS_LIB = null;
+/** SheetJS with cell styles (xlsx-js-style), loaded on first use under its own name so the page's reader stays as is. */
+async function xlStyled() {
+  if (XLS_LIB) return XLS_LIB;
+  const keep = window.XLSX;
+  try {
+    await new Promise((res, rej) => { const el = document.createElement("script"); el.src = XLS_URL; el.onload = res; el.onerror = rej; document.head.appendChild(el); });
+    if (!window.XLSX || window.XLSX === keep) throw new Error("no library");
+    XLS_LIB = window.XLSX;
+  } finally { window.XLSX = keep; }
+  return XLS_LIB;
+}
+const RX = { rea: "C6E0B4", old: "FFE699", info: "D9E1F2", navy: "1F3864", ink: "1F1F1F", line: "BFBFBF", soft: "D9D9D9",
+  diff: "FCE4D6", red: "C00000", grey: "7F7F7F", ok: "375623", tabOk: "70AD47", tabNo: "ED7D31" };
+const rxBorder = (rgb = RX.line) => { const e = { style: "thin", color: { rgb } }; return { top: e, bottom: e, left: e, right: e }; };
+/** Text that is really a number ("2347946", "1250000") goes in as a number, so Excel shows no green "number stored as
+ *  text" flags; leading zeros, IDs with letters and long codes stay text. dd/mm/yyyy in a date column -> a real date. */
+const RX_NUM = /^-?(0|[1-9]\d{0,14})(\.\d+)?$/;
+function rxValue(v, isDate, isNum) {
+  if (v === null || v === undefined) return null;
+  if (typeof v !== "string") return v;
+  const t = v.trim();
+  if (!t) return null;
+  if (isDate) { const m = t.match(/^(\d{2})\/(\d{2})\/(\d{4})$/); if (m) return { date: Date.UTC(+m[3], +m[2] - 1, +m[1]) / 86400000 + 25569 }; }
+  return isNum && RX_NUM.test(t) ? Number(t) : v;
+}
+/** One data sheet: header styled by where each column comes from (REA green, old CRM yellow, checks blue). */
+function rxSheet(L, columns, rows, opts = {}) {
+  const dateCol = columns.map((c) => opts.dates !== false && /date$/i.test(String(c).trim()));
+  // a column becomes numbers only when every value in it is one, so IDs like "1P5534" and "2829514" line up the same
+  const numCol = columns.map((c) => {
+    let any = false;
+    for (const row of rows) { const v = row[c]; if (v === null || v === undefined) continue; const t = String(v).trim(); if (!t) continue; if (!RX_NUM.test(t)) return false; any = true; }
+    return any;
+  });
+  const aoa = [columns];
+  const dates = [];
+  rows.forEach((row, i) => aoa.push(columns.map((c, j) => {
+    const v = rxValue(row[c], dateCol[j], numCol[j]);
+    if (v && typeof v === "object" && "date" in v) { dates.push([i + 1, j]); return v.date; }
+    return v;
+  })));
+  const ws = L.utils.aoa_to_sheet(aoa);
+  const enc = L.utils.encode_cell;
+  columns.forEach((c, j) => {
+    const cell = ws[enc({ r: 0, c: j })];
+    if (cell) cell.s = { font: { bold: true, color: { rgb: RX.ink } }, fill: { patternType: "solid", fgColor: { rgb: (opts.fill || (() => RX.info))(c) } },
+      alignment: { vertical: "center", wrapText: true }, border: rxBorder() };
+  });
+  for (const [r, c] of dates) { const cell = ws[enc({ r, c })]; cell.z = "dd/mm/yyyy"; cell.s = { numFmt: "dd/mm/yyyy", alignment: { horizontal: "left" } }; }
+  if (opts.cellStyle) rows.forEach((row, i) => columns.forEach((c, j) => {
+    const st = opts.cellStyle(c, row[c]); const cell = st && ws[enc({ r: i + 1, c: j })];
+    if (cell) cell.s = Object.assign({}, cell.s, st);
+  }));
+  // widths from the header and the first 400 rows (wrapped headers can be narrower than their text)
+  ws["!cols"] = columns.map((c, j) => {
+    let w = Math.min(String(c).length, 18);
+    for (let i = 1; i < Math.min(aoa.length, 401); i++) { const v = aoa[i][j]; if (v !== null && v !== undefined) w = Math.max(w, dateCol[j] && typeof v === "number" ? 10 : String(v).length); }
+    return { wch: Math.max(9, Math.min(50, w + 2)) };
+  });
+  ws["!rows"] = [{ hpt: 32 }];
+  if (rows.length) ws["!autofilter"] = { ref: ws["!ref"] };
+  ws["!margins"] = { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 };
+  return ws;
+}
+/** Row height for wrapped text: lines needed at this column width. */
+const rxLines = (text, wch) => String(text || "").split("\n").reduce((n, p) => n + Math.max(1, Math.ceil(p.length / (wch * 1.05))), 0);
+/** The Summary cover: title, the three result sheets with what the client needs to do, scope and colour key. */
+function rxSummary(L, r, office) {
+  const st = r.stats, C = r.client, enc = L.utils.encode_cell, ws = {};
+  const W = [24, 12, 62, 62];
+  const put = (row, col, v, s) => { ws[enc({ r: row, c: col })] = typeof v === "number" ? { t: "n", v, s } : { t: "s", v: String(v ?? ""), s }; };
+  const today = new Date().toLocaleDateString("en-AU", { day: "numeric", month: "long", year: "numeric" });
+  put(0, 0, "REA Feed Matching Results", { font: { bold: true, sz: 18, color: { rgb: RX.navy } } });
+  put(1, 0, `${C}${office ? `  \u00b7  REA office ${office}` : ""}  \u00b7  prepared ${today}`, { font: { sz: 11, color: { rgb: RX.grey } } });
+  const head = { font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: RX.navy } }, alignment: { vertical: "center", wrapText: true }, border: rxBorder(RX.navy) };
+  ["Sheet Name", "# of items", "Description", "Action Needed"].forEach((h, j) => put(3, j, h, j === 1 ? Object.assign({}, head, { alignment: { horizontal: "center", vertical: "center" } }) : head));
+  const rowsH = [{ hpt: 18 }, { hpt: 16 }, { hpt: 8 }, { hpt: 24 }];
+  r.summary.forEach((x, i) => {
+    const R = 4 + i, b = rxBorder(RX.soft), top = { vertical: "top", wrapText: true };
+    put(R, 0, x["Sheet Name"], { font: { bold: true, color: { rgb: RX.ink } }, alignment: top, border: b });
+    put(R, 1, Number(x["# of items"]) || 0, { font: { bold: true, sz: 13, color: { rgb: RX.red } }, numFmt: "#,##0", alignment: { horizontal: "center", vertical: "top" }, border: b });
+    put(R, 2, x.Description, { alignment: top, border: b });
+    put(R, 3, x["Action Needed"], { alignment: top, border: b });
+    rowsH[R] = { hpt: Math.max(rxLines(x.Description, W[2]), rxLines(x["Action Needed"], W[3])) * 15 + 8 };
+  });
+  let R = 4 + r.summary.length + 1;
+  const label = { font: { bold: true, color: { rgb: RX.navy } } }, num = { numFmt: "#,##0", alignment: { horizontal: "center" } };
+  put(R++, 0, "Scope", { font: { bold: true, sz: 12, color: { rgb: RX.navy } } });
+  const outN = Object.values(st.outOfScope || {}).reduce((a, n) => a + n, 0);
+  const outWhat = Object.keys(st.outOfScope || {}).map((k) => (k.toLowerCase() === "property" ? "property records" : `${k.toLowerCase()}s`)).join(" and ") || "none";
+  [["REA records received", st.reaRows, ""], ["Listings checked", st.inScope, "Every REA listing apart from the records below."],
+    ["Not checked", outN, `REA ${outWhat} (not listings).`]].forEach(([a, n, t]) => {
+    put(R, 0, a, label); put(R, 1, n, num); put(R, 2, t, { font: { color: { rgb: RX.grey } } }); R++;
+  });
+  R++;
+  put(R++, 0, "Colour key", { font: { bold: true, sz: 12, color: { rgb: RX.navy } } });
+  [[RX.rea, "REA data", "Columns taken from the REA listings feed."], [RX.old, `${C} data`, `Columns taken from your old ${C} database.`],
+    [RX.diff, "Different address", "Matched by REA ID, but the address differs. Please check these."]].forEach(([rgb, a, t]) => {
+    put(R, 0, a, { fill: { patternType: "solid", fgColor: { rgb } }, border: rxBorder(), font: { bold: true, color: { rgb: RX.ink } } });
+    put(R, 2, t, { font: { color: { rgb: RX.grey } } }); R++;
+  });
+  ws["!ref"] = L.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: R, c: 3 } });
+  ws["!cols"] = W.map((wch) => ({ wch }));
+  ws["!rows"] = rowsH;
+  ws["!margins"] = { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 };
+  return ws;
+}
+/** What SheetJS can't write: frozen header row, hidden gridlines, tab colour, landscape fit-to-width printing. */
+async function rxFinish(buf, sheets) {
+  if (!window.JSZip) return new Blob([buf]);
+  const zip = await JSZip.loadAsync(buf);
+  for (const [i, o] of sheets.entries()) {
+    const path = `xl/worksheets/sheet${i + 1}.xml`, f = zip.file(path);
+    if (!f || !o) continue;
+    let x = new TextDecoder("utf-8").decode(await f.async("uint8array"));
+    const pr = `${o.tab ? `<tabColor rgb="FF${o.tab}"/>` : ""}<pageSetUpPr fitToPage="1"/>`;
+    if (/<sheetPr\b[^>]*\/>/.test(x)) x = x.replace(/<sheetPr\b([^>]*)\/>/, `<sheetPr$1>${pr}</sheetPr>`);
+    else if (/<sheetPr\b[^>]*>/.test(x)) x = x.replace(/<sheetPr\b([^>]*)>/, `<sheetPr$1>${pr}`);
+    else x = x.replace(/(<worksheet\b[^>]*>)/, `$1<sheetPr>${pr}</sheetPr>`);
+    const view = `<sheetView workbookViewId="0"${o.grid === false ? ' showGridLines="0"' : ""}>${o.freeze ? '<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A2" sqref="A2"/>' : ""}</sheetView>`;
+    if (/<sheetViews>[\s\S]*?<\/sheetViews>/.test(x)) x = x.replace(/<sheetViews>[\s\S]*?<\/sheetViews>/, `<sheetViews>${view}</sheetViews>`);
+    else x = x.replace(/(<dimension\b[^>]*\/>)/, `$1<sheetViews>${view}</sheetViews>`);
+    x = x.replace(/(<pageMargins\b[^>]*\/>)/, `$1<pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0"/>`);
+    zip.file(path, new TextEncoder().encode(x));
+  }
+  return zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } });
+}
 async function rmExport(filename) {
   const r = RM.result;
   if (!r) throw new Error("Run the matching first - there's nothing to export yet.");
   if (!window.XLSX) throw new Error("The Excel writer didn't load.");
-  const wb = XLSX.utils.book_new();
-  // blank -> no cell (Excel treats "" as filled); aoa_to_sheet keeps big sheets fast
-  const add = (name, columns, rows, widths) => {
-    const aoa = [columns].concat(rows.map((row) => columns.map((c) => { const v = row[c]; return v === null || v === undefined || (typeof v === "string" && !v.trim()) ? null : v; })));
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
-    if (rows.length) ws["!autofilter"] = { ref: ws["!ref"] };
-    ws["!cols"] = widths || columns.map((c) => ({ wch: Math.min(40, Math.max(10, String(c).length + 2)) }));
-    XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 31));
+  let L = null;
+  try { L = await xlStyled(); } catch (e) { L = null; }
+  const styled = !!L; L = L || window.XLSX;
+  const C = r.client, office = $("rmOffice").value.trim() || r.office || "";
+  const wb = L.utils.book_new(), finish = [];
+  wb.Props = { Title: "REA Feed Matching Results", Subject: `${C} REA matching`, Company: "Zenu" };
+  const reaCols = new Set(["ID", "SOURCE_ID", "LISTING_STATUS", "SALE_METHOD", "Full Address", "UNIT_NUMBER", "STREET_NUMBER", "STREET_NAME", "SUBURB", "POSTCODE", "STATE", "Extracted Listed Date", "Extracted Contract Date", "Extracted Leased Date"]);
+  const fill = (c) => (/^REA /.test(c) || reaCols.has(c) ? RX.rea : c.startsWith(`${C} `) || c === "Settled Date" ? RX.old : RX.info);
+  const mark = (c, v) => {
+    if (c === "Address Check" && v === "Different") return { fill: { patternType: "solid", fgColor: { rgb: RX.diff } }, font: { bold: true, color: { rgb: RX.red } } };
+    if (c === "Address Check" && v && v !== "Same") return { font: { italic: true, color: { rgb: RX.grey } } };
+    if (c === "Indicator" && v === "Matched") return { font: { color: { rgb: RX.ok } } };
+    return null;
   };
-  add("Summary", r.columns.summary, r.summary, [{ wch: 18 }, { wch: 11 }, { wch: 90 }, { wch: 90 }]);
-  add("Sold to Settled", r.columns.settled, r.settled);
-  add("Matched_By SourceID", r.columns.matched, r.matched);
-  add("Unable to match", r.columns.unable, r.unable);
+  const add = (name, ws, o) => { L.utils.book_append_sheet(wb, ws, name.slice(0, 31)); finish.push(o); };
+  add("Summary", rxSummary(L, r, office), { grid: false, tab: RX.navy });
+  add("Sold to Settled", rxSheet(L, r.columns.settled, r.settled, { fill }), { freeze: true, tab: RX.tabOk });
+  add("Matched_By SourceID", rxSheet(L, r.columns.matched, r.matched, { fill, cellStyle: mark }), { freeze: true, tab: RX.tabOk });
+  add("Unable to match", rxSheet(L, r.columns.unable, r.unable, { fill }), { freeze: true, tab: RX.tabNo });
   if ($("rmInputs").checked) {
-    const f = RM.files;
-    if (f.contacts) add("Contact ID", f.contacts.frame.columns, f.contacts.frame.rows);
-    if (f.sale) add("Listing Sale", f.sale.frame.columns, f.sale.frame.rows);
-    if (f.lease) add("Listing Lease", f.lease.frame.columns, f.lease.frame.rows);
-    if (f.props) { const p = E.reaMatch.withAddress(f.props.frame, "props"); add("Properties", p.columns, p.rows); }
-    const q = E.reaMatch.withAddress(f.rea.frame, "rea"); add(`${r.office ? r.office + " " : ""}REA data`, q.columns, q.rows);
+    // copies of the inputs: header styled, values as they came (no date conversion), not post-processed (they're big)
+    const f = RM.files, raw = (k) => () => (k === "rea" ? RX.rea : RX.old);
+    if (f.contacts) add("Contact ID", rxSheet(L, f.contacts.frame.columns, f.contacts.frame.rows, { fill: raw("contacts"), dates: false }), null);
+    if (f.sale) add("Listing Sale", rxSheet(L, f.sale.frame.columns, f.sale.frame.rows, { fill: raw("sale"), dates: false }), null);
+    if (f.lease) add("Listing Lease", rxSheet(L, f.lease.frame.columns, f.lease.frame.rows, { fill: raw("lease"), dates: false }), null);
+    if (f.props) { const p = E.reaMatch.withAddress(f.props.frame, "props"); add("Properties", rxSheet(L, p.columns, p.rows, { fill: raw("props"), dates: false }), null); }
+    const q = E.reaMatch.withAddress(f.rea.frame, "rea"); add(`${office ? office + " " : ""}REA data`, rxSheet(L, q.columns, q.rows, { fill: raw("rea"), dates: false }), null);
   }
   let name = String(filename || $("rmName")?.value || "").trim() || rmFileName();
   name = name.replace(/[\\/:*?"<>|]+/g, "_"); if (!/\.xlsx$/i.test(name)) name += ".xlsx";
-  const buf = xlWrite(wb, { compression: true });
-  return saveFile(name, new Blob([buf]));
+  const buf = xlWrite(wb, { compression: true, cellStyles: true }, L);
+  if (!styled) rmMsg("The Excel styling library didn't load, so this workbook has plain formatting.", true);
+  return saveFile(name, styled ? await rxFinish(buf, finish) : new Blob([buf]));
 }
 function resetRea() {
   Object.assign(RM, { files: {}, result: null });
