@@ -1506,12 +1506,14 @@
   const REA_OUT_OF_SCOPE = new Set(["appraisal", "property"]);
   const REA_KINDS = {
     sale: "Listing Sale", lease: "Listing Lease", props: "Properties", contacts: "Contact ID", rea: "Office REA data",
+    eprops: "Eagle properties", eaddr: "Addresses", evendors: "Vendors", epurch: "Purchasers", econtracts: "Contracts",
   };
   /** Which REA-matching input a table is, from its columns (and file name as a tie-break), or "". */
   /** Source CRMs for REA matching. ready = built; the others show as coming later. slots = the input files, in order:
    *  [kind, label, hint, need]. Add a CRM here (and its reaKind / reaMatch handling) to switch it on. */
   const REA_CRMS = {
     agentbox: { label: "Agentbox", ready: true, keyNote: "REA source_id = Agentbox rea_unique_id (Listing Sale first, then Listing Lease)",
+      need: [["rea"], ["sale", "lease"]],
       slots: [
         ["rea", "Office REA data", "listings.csv from the REA export", "required"],
         ["sale", "Listing Sale", "listing_sale.csv", "sale or lease"],
@@ -1521,17 +1523,40 @@
       ] },
     rex: { label: "Rex", ready: false, slots: [] },
     vaultre: { label: "VaultRE", ready: false, slots: [] },
-    eagle: { label: "Eagle", ready: false, slots: [] },
+    eagle: { label: "Eagle", ready: true, keyNote: "REA source_id = Eagle rea_id (properties.csv, top-up files included)",
+      need: [["rea"], ["eprops"]],
+      // several files fill one slot (the main export plus top-ups): rows are added, a repeated id only once
+      merge: ["eprops", "eaddr", "evendors", "epurch", "econtracts"],
+      // big Eagle files REA matching never uses: not read when a whole export folder is loaded
+      skip: /(^|[\\/])(notes[^\\/]*|images|tasks|property_interests)\.csv$/i,
+      slots: [
+        ["rea", "Office REA data", "listings.csv from the REA export", "required"],
+        ["eprops", "Properties", "properties.csv · add top-up files too", "required"],
+        ["eaddr", "Addresses", "addresses.csv · suburb, state, postcode", "for addresses"],
+        ["evendors", "Vendors", "vendors.csv · for Listing Manual Vendor", "optional"],
+        ["epurch", "Purchasers", "purchasers.csv · for Listing Manual Buyer", "optional"],
+        ["econtracts", "Contracts", "contracts.csv · links buyers to listings", "optional"],
+        ["contacts", "Contact ID", "Zenu ID map · copied into the workbook", "optional"],
+      ] },
   };
   /** Which REA-matching input a table is for this CRM, from its columns (file name as a tie-break), or "". */
   function reaKind(columns, name, crm = "agentbox") {
-    if (crm !== "agentbox") return "";
+    if (!REA_CRMS[crm] || !REA_CRMS[crm].ready) return "";
     const norm = (x) => String(x).replace(/^\uFEFF/, "").trim().toLowerCase().replace(/[\s-]+/g, "_");
     const cols = new Set(columns.map(norm));
     const has = (c) => cols.has(c);
     const n = String(name || "").toLowerCase();
     if (has("source_contact_id") && has("contact_id")) return "contacts";
     if (has("source_id") && has("listing_status")) return "rea";
+    if (crm === "eagle") {
+      if (has("rea_id") && has("status") && has("street_no") && has("postcode_id")) return "eprops";
+      if (has("postcode_id") && has("suburb") && has("postcode") && has("state") && !has("rea_id") && !has("status")) return "eaddr";
+      if (has("property_id") && has("settlement_date") && has("sale_price")) return "econtracts";
+      const small = cols.size <= 6;
+      if (small && has("contact_id") && has("contract_id")) return "epurch";
+      if (small && has("contact_id") && has("property_id") && !has("appraisal_id") && !has("agent_id") && !has("address_id")) return "evendors";
+      return "";
+    }
     if (has("rea_unique_id") && (has("settled_date") || has("sold_price") || has("contract_date"))) return "sale";
     if (has("rea_unique_id") && (has("leased_date") || has("listed_rent") || has("lease_start_date"))) return "lease";
     if (has("rea_unique_id")) return /lease/.test(n) ? "lease" : /sale/.test(n) ? "sale" : "";
@@ -1573,7 +1598,8 @@
   function reaMatch(frames, opts = {}) {
     const crm = REA_CRMS[opts.crm || "agentbox"];
     if (!crm) throw new Error(`Unknown CRM '${opts.crm}'.`);
-    if (!crm.ready) throw new Error(`REA matching for ${crm.label} isn't built yet. Only Agentbox works for now.`);
+    if (!crm.ready) throw new Error(`REA matching for ${crm.label} isn't built yet. Only Agentbox and Eagle work for now.`);
+    if (opts.crm === "eagle") return reaMatchEagle(frames, opts);
     const client = reaText(opts.client) || "Old Office";
     if (!frames.rea) throw new Error("Load the office's REA data (listings.csv from the REA export).");
     if (!frames.sale && !frames.lease) throw new Error("Load listing_sale and/or listing_lease from the old CRM export.");
@@ -1608,21 +1634,13 @@
     let different = 0, noSettledDate = 0, blankSource = 0;
     for (const row of frames.rea.rows) {
       const status = reaText(R(row, "listing_status"));
-      if (REA_OUT_OF_SCOPE.has(status.toLowerCase())) { outOfScope[status] = (outOfScope[status] || 0) + 1; continue; }
-      const address = reaJoin(" ", [reaJoin(", ", [reaJoin(" ", [R(row, "unit_number"), R(row, "street_number"), R(row, "street_name")]), R(row, "suburb"), R(row, "state")]), R(row, "postcode")]);
-      const listed = reaDate(R(row, "date_listed")), contract = reaDate(R(row, "contract_date")), leased = reaDate(R(row, "leased_date"));
+      const out = reaOutOfScope(status);
+      if (out) { outOfScope[out] = (outOfScope[out] || 0) + 1; continue; }
+      const { address, listed, contract, leased } = reaRowInfo(R, row);
       const key = reaKey(R(row, "source_id"));
       if (!key) blankSource++;
       const hit = key ? byKey.get(key) : null;
-      if (!hit) {
-        unable.push({
-          ID: reaText(R(row, "id")), SOURCE_ID: reaText(R(row, "source_id")), LISTING_STATUS: status, SALE_METHOD: reaText(R(row, "sale_method")),
-          "Full Address": address, UNIT_NUMBER: reaText(R(row, "unit_number")), STREET_NUMBER: reaText(R(row, "street_number")),
-          STREET_NAME: reaText(R(row, "street_name")), SUBURB: reaText(R(row, "suburb")), POSTCODE: reaText(R(row, "postcode")), STATE: reaText(R(row, "state")),
-          "Extracted Listed Date": listed, "Extracted Contract Date": contract, "Extracted Leased Date": leased,
-        });
-        continue;
-      }
+      if (!hit) { unable.push(reaUnableRow(R, row)); continue; }
       const G = hit.G, old = hit.row;
       const pid = reaText(G(old, "property_id")), prop = props.get(reaKey(pid));
       const reaStreet = reaStreetKey(reaJoin(" ", [R(row, "unit_number"), R(row, "street_number"), R(row, "street_name")]), R(row, "suburb"));
@@ -1667,17 +1685,224 @@
     ];
     const reaRows = frames.rea.rows.length, inScope = matched.length + unable.length;
     return {
-      client: C, summary, matched, settled, unable,
+      crm: "agentbox", client: C, summary, matched, settled, unable, extraSheets: [],
       stats: { reaRows, inScope, outOfScope, matched: matched.length, settled: settled.length, unable: unable.length,
         differentAddress: different, noSettledDate, blankSourceId: blankSource, oldListings: byKey.size, sharedReaIds: shared.sale + shared.lease },
       columns: {
         matched: ["Indicator", "REA ID", "REA SOURCE_ID", "REA LISTING_STATUS", "REA SALE_METHOD", "REA Full Address", "REA Extracted Listed Date", "REA Extracted Contract Date", "REA Extracted Leased Date",
           `${C} Listing ID`, `${C} Property ID`, `${C} REA ID`, `${C} Status`, `${C} Sale/Lease`, `${C} Property Address`, `${C} Listed Date`, `${C} Contract Date`, `${C} Leased Date`, "Address Check"],
         settled: ["REA ID", "REA SOURCE_ID", "REA LISTING_STATUS", `${C} Listing ID`, `${C} Property ID`, `${C} REA ID`, `${C} Status`, "Settled Date"],
-        unable: ["ID", "SOURCE_ID", "LISTING_STATUS", "SALE_METHOD", "Full Address", "UNIT_NUMBER", "STREET_NUMBER", "STREET_NAME", "SUBURB", "POSTCODE", "STATE", "Extracted Listed Date", "Extracted Contract Date", "Extracted Leased Date"],
+        unable: REA_UNABLE_COLUMNS,
         summary: ["Sheet Name", "# of items", "Description", "Action Needed"],
       },
     };
+  }
+
+  /** Why an REA row isn't a listing to match ("" = it is): appraisals, property records, no listing status. */
+  const reaOutOfScope = (status) => (!status ? "No status" : REA_OUT_OF_SCOPE.has(status.toLowerCase()) ? status : "");
+  function reaRowInfo(R, row) {
+    return {
+      address: reaJoin(" ", [reaJoin(", ", [reaJoin(" ", [R(row, "unit_number"), R(row, "street_number"), R(row, "street_name")]), R(row, "suburb"), R(row, "state")]), R(row, "postcode")]),
+      listed: reaDate(R(row, "date_listed")), contract: reaDate(R(row, "contract_date")), leased: reaDate(R(row, "leased_date")),
+    };
+  }
+  const REA_UNABLE_COLUMNS = ["ID", "SOURCE_ID", "LISTING_STATUS", "SALE_METHOD", "Full Address", "UNIT_NUMBER", "STREET_NUMBER", "STREET_NAME", "SUBURB", "POSTCODE", "STATE", "Extracted Listed Date", "Extracted Contract Date", "Extracted Leased Date"];
+  function reaUnableRow(R, row) {
+    const i = reaRowInfo(R, row);
+    return {
+      ID: reaText(R(row, "id")), SOURCE_ID: reaText(R(row, "source_id")), LISTING_STATUS: reaText(R(row, "listing_status")), SALE_METHOD: reaText(R(row, "sale_method")),
+      "Full Address": i.address, UNIT_NUMBER: reaText(R(row, "unit_number")), STREET_NUMBER: reaText(R(row, "street_number")),
+      STREET_NAME: reaText(R(row, "street_name")), SUBURB: reaText(R(row, "suburb")), POSTCODE: reaText(R(row, "postcode")), STATE: reaText(R(row, "state")),
+      "Extracted Listed Date": i.listed, "Extracted Contract Date": i.contract, "Extracted Leased Date": i.leased,
+    };
+  }
+  /** Eagle writes dates month first (4/23/2025); a top-up opened in Excel may come back day first (26/07/2023). */
+  function eagleDate(v) {
+    const t = reaText(v);
+    const m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
+    if (!m) return reaDate(t);
+    let [mo, d] = [+m[1], +m[2]];
+    if (mo > 12 && d <= 12) [mo, d] = [d, mo];
+    if (mo < 1 || mo > 12 || d < 1 || d > 31) return "";
+    return `${String(d).padStart(2, "0")}/${String(mo).padStart(2, "0")}/${m[3]}`;
+  }
+  /** Eagle tables by id: rows of every loaded file, a repeated id only once (main export first, then top-ups). */
+  function eagleIndex(frame, idCol = "id") {
+    const out = new Map();
+    if (!frame) return out;
+    const G = reaGetter(frame.columns);
+    for (const row of frame.rows) { const k = reaKey(G(row, idCol)); if (k && !out.has(k)) out.set(k, { row, G }); }
+    return out;
+  }
+  /** postcode_id -> {suburb, state, postcode}, from addresses.csv (properties.csv only has the id). */
+  function eaglePlaces(frame) {
+    const out = new Map();
+    if (!frame) return out;
+    const G = reaGetter(frame.columns);
+    for (const row of frame.rows) {
+      const k = reaKey(G(row, "postcode_id"));
+      if (k && !out.has(k) && reaText(G(row, "suburb"))) out.set(k, { suburb: reaText(G(row, "suburb")), state: reaText(G(row, "state")), postcode: reaText(G(row, "postcode")) });
+    }
+    return out;
+  }
+  /** Rural lots ("L1 5171 The Bucketts Way", "L2-11 ...") count as lot numbers, not street numbers. */
+  const eagleStreetKey = (text, suburb) => reaStreetKey(reaText(text).replace(/\bL\d+[a-z]?\b/gi, " "), suburb);
+  /** Same street and suburb, and the same number - or one side has no number (Eagle often keeps only the lot). */
+  function eagleSameStreet(a, b) {
+    if (!a || !b) return false;
+    const [an, as, ab] = a.split("|"), [bn, bs, bb] = b.split("|");
+    return as === bs && ab === bb && (an === bn || !an || !bn);
+  }
+  const eagleAddress = (G, row, place) => reaJoin(" ", [reaJoin(", ", [reaJoin(" ", [G(row, "unit"), G(row, "street_no"), G(row, "street")]), place && place.suburb, place && place.state]), place && place.postcode]);
+  const EAGLE_LAND_UNITS = { "square metres": "SQM", "square meters": "SQM", acres: "Acre", hectares: "Hectare", "square feet": "SQFT" };
+  const eagleCategory = (t) => { const x = reaText(t).toLowerCase(); return x === "rural" ? "rural" : x === "commercial" || x === "business" ? "commercial" : "Residential"; };
+  const eagleSaleLease = (t) => (/rental|lease/i.test(reaText(t)) ? "Lease" : reaText(t) ? "Sale" : "");
+  const EAGLE_MANUAL_COLUMNS = ["Property_Identifier", "PROPERTY_TIMELINE_STATUS", "PROPERTY_TYPE", "PROPERTY_SALE_METHOD", "PROPERTY_UNIT_NUMBER", "PROPERTY_STREET_NUMBER",
+    "PROPERTY_STREET_NAME", "suburb", "PROPERTY_POSTCODE", "PROPERTY_STATE", "property_full_address", "PROPERTY_BEDROOMS", "PROPERTY_BATHROOMS", "property_toilets",
+    "property_garages", "PROPERTY_CARPORTS", "property_open_parking_spaces", "PROPERTY_LAND_SIZE_M2", "listing_land_size_system", "PROPERTY_CATEGORY",
+    "PROPERTY_CONTRACT_DATE", "PROPERTY_SOLD_PRICE", "rea_id"];
+
+  /**
+   * Eagle: REA source_id = properties.rea_id. Besides the usual sheets, Eagle's Sold listings with no REA match become
+   * "Listing Manual Creation" (to upload by hand), with their vendors and buyers when those files are loaded.
+   */
+  function reaMatchEagle(frames, opts = {}) {
+    const C = reaText(opts.client) || "Old Office";
+    if (!frames.rea) throw new Error("Load the office's REA data (listings.csv from the REA export).");
+    if (!frames.eprops) throw new Error("Load properties.csv from the Eagle export.");
+    const R = reaGetter(frames.rea.columns);
+    const props = eagleIndex(frames.eprops), places = eaglePlaces(frames.eaddr);
+    const byRea = new Map();
+    let sharedIds = 0;
+    for (const p of props.values()) {
+      const k = reaKey(p.G(p.row, "rea_id"));
+      if (!k) continue;
+      if (byRea.has(k)) { sharedIds++; continue; }
+      byRea.set(k, p);
+    }
+    // settlement dates by property, when contracts are loaded (Eagle has no 'Settled' status, so usually unused)
+    const settleBy = new Map();
+    if (frames.econtracts) {
+      const K = reaGetter(frames.econtracts.columns);
+      for (const row of frames.econtracts.rows) { const k = reaKey(K(row, "property_id")), d = eagleDate(K(row, "settlement_date")); if (k && d && !settleBy.has(k)) settleBy.set(k, d); }
+    }
+    const matched = [], settled = [], unable = [], outOfScope = {}, reaSources = new Set();
+    let different = 0, noSettledDate = 0, blankSource = 0;
+    for (const row of frames.rea.rows) {
+      const src = reaKey(R(row, "source_id"));
+      if (src) reaSources.add(src);
+      const status = reaText(R(row, "listing_status"));
+      const out = reaOutOfScope(status);
+      if (out) { outOfScope[out] = (outOfScope[out] || 0) + 1; continue; }
+      if (!src) blankSource++;
+      const hit = src ? byRea.get(src) : null;
+      if (!hit) { unable.push(reaUnableRow(R, row)); continue; }
+      const { G, row: old } = hit, info = reaRowInfo(R, row);
+      const place = places.get(reaKey(G(old, "postcode_id")));
+      const oldKey = place ? eagleStreetKey(reaJoin(" ", [G(old, "unit"), G(old, "street_no"), G(old, "street")]), place.suburb) : "";
+      const reaStreet = eagleStreetKey(reaJoin(" ", [R(row, "unit_number"), R(row, "street_number"), R(row, "street_name")]), R(row, "suburb"));
+      const check = !frames.eaddr ? "" : !place ? `No suburb in ${C}` : eagleSameStreet(oldKey, reaStreet) ? "Same" : "Different";
+      if (check === "Different") different++;
+      const oldStatus = reaText(G(old, "status")), id = reaText(G(old, "id"));
+      const m = {
+        Indicator: "Matched", "REA ID": reaText(R(row, "id")), "REA SOURCE_ID": reaText(R(row, "source_id")), "REA LISTING_STATUS": status,
+        "REA SALE_METHOD": reaText(R(row, "sale_method")), "REA Full Address": info.address,
+        "REA Extracted Listed Date": info.listed, "REA Extracted Contract Date": info.contract, "REA Extracted Leased Date": info.leased,
+        [`${C} Listing ID`]: id, [`${C} REA ID`]: reaText(G(old, "rea_id")), [`${C} Status`]: oldStatus,
+        [`${C} Sale/Lease`]: eagleSaleLease(G(old, "listing_type")), [`${C} Authority`]: reaText(G(old, "authority")),
+        [`${C} Property Address`]: eagleAddress(G, old, place),
+        [`${C} Listed Date`]: eagleDate(G(old, "listed_at")), [`${C} Contract Date`]: eagleDate(G(old, "sold_date")), [`${C} Leased Date`]: eagleDate(G(old, "let_date")),
+        "Address Check": check,
+      };
+      matched.push(m);
+      if (status.toLowerCase() === "sold" && oldStatus.toLowerCase() === "settled") {
+        const sd = settleBy.get(reaKey(id)) || "";
+        if (!sd) noSettledDate++;
+        settled.push({ "REA ID": m["REA ID"], "REA SOURCE_ID": m["REA SOURCE_ID"], "REA LISTING_STATUS": status, [`${C} Status`]: oldStatus,
+          [`${C} Listing ID`]: id, [`${C} REA ID`]: m[`${C} REA ID`], "Settled Date": sd });
+      }
+    }
+    // Eagle Sold listings that REA doesn't have at all: created by hand
+    const manual = [], manualIds = new Set();
+    for (const { row, G } of props.values()) {
+      if (reaText(G(row, "status")).toLowerCase() !== "sold" || reaSources.has(reaKey(G(row, "rea_id")))) continue;
+      const place = places.get(reaKey(G(row, "postcode_id")));
+      const id = reaText(G(row, "id"));
+      manualIds.add(reaKey(id));
+      manual.push({
+        Property_Identifier: id, PROPERTY_TIMELINE_STATUS: "Sold",
+        PROPERTY_TYPE: (reaText(G(row, "property_type")) || reaText(G(row, "commercial_property_type"))).replace(/\s*\/\s*/g, " "),
+        PROPERTY_SALE_METHOD: "Sale", PROPERTY_UNIT_NUMBER: reaText(G(row, "unit")), PROPERTY_STREET_NUMBER: reaText(G(row, "street_no")),
+        PROPERTY_STREET_NAME: reaText(G(row, "street")), suburb: place ? place.suburb.toUpperCase() : "", PROPERTY_POSTCODE: place ? place.postcode : "",
+        PROPERTY_STATE: place ? place.state : "", property_full_address: eagleAddress(G, row, place),
+        PROPERTY_BEDROOMS: reaText(G(row, "bedrooms")), PROPERTY_BATHROOMS: reaText(G(row, "bathrooms")), property_toilets: reaText(G(row, "toilets")),
+        property_garages: reaText(G(row, "garage_spaces")), PROPERTY_CARPORTS: reaText(G(row, "carport_spaces")), property_open_parking_spaces: reaText(G(row, "open_car_spaces")),
+        PROPERTY_LAND_SIZE_M2: reaText(G(row, "land_size")),
+        listing_land_size_system: EAGLE_LAND_UNITS[reaText(G(row, "land_size_units")).toLowerCase()] || reaText(G(row, "land_size_units")),
+        PROPERTY_CATEGORY: eagleCategory(G(row, "listing_type")), PROPERTY_CONTRACT_DATE: eagleDate(G(row, "sold_date")),
+        PROPERTY_SOLD_PRICE: reaText(G(row, "sold_price")), rea_id: reaText(G(row, "rea_id")),
+      });
+    }
+    const pick = (frame, test, extra) => {
+      if (!frame) return null;
+      const G = reaGetter(frame.columns), seen = new Set(), rows = [];
+      for (const row of frame.rows) {
+        const k = reaKey(G(row, "id"));
+        if (seen.has(k) || !test(G, row)) continue;
+        seen.add(k);
+        rows.push(Object.assign({ id: reaText(G(row, "id")), contact_id: reaText(G(row, "contact_id")) }, extra(G, row)));
+      }
+      return rows;
+    };
+    const vendors = pick(frames.evendors, (G, row) => manualIds.has(reaKey(G(row, "property_id"))),
+      (G, row) => ({ property_id: reaText(G(row, "property_id")), created_at: reaText(G(row, "created_at")), updated_at: reaText(G(row, "updated_at")) }));
+    const contractProp = new Map();
+    if (frames.econtracts) { const K = reaGetter(frames.econtracts.columns); for (const row of frames.econtracts.rows) { const k = reaKey(K(row, "id")); if (k && !contractProp.has(k)) contractProp.set(k, reaText(K(row, "property_id"))); } }
+    const buyers = frames.econtracts ? pick(frames.epurch, (G, row) => manualIds.has(reaKey(contractProp.get(reaKey(G(row, "contract_id"))))),
+      (G, row) => ({ contract_id: reaText(G(row, "contract_id")), created_at: reaText(G(row, "created_at")), updated_at: reaText(G(row, "updated_at")), "Property ID": contractProp.get(reaKey(G(row, "contract_id"))) || "" })) : null;
+    const extraSheets = [{ name: "Listing Manual Creation", key: "manual", rows: manual, columns: EAGLE_MANUAL_COLUMNS, fill: "old" }];
+    if (vendors) extraSheets.push({ name: "Listing Manual Vendor", key: "vendors", rows: vendors, columns: ["id", "contact_id", "property_id", "created_at", "updated_at"], fill: "old" });
+    if (buyers) extraSheets.push({ name: "Listing Manual Buyer", key: "buyers", rows: buyers, columns: ["id", "contact_id", "contract_id", "created_at", "updated_at", "Property ID"], fill: "old" });
+    const tabs = extraSheets.slice(1).map((x) => x.name.replace("Listing Manual ", "Listing ")).join(" and ");
+    const summary = [
+      { "Sheet Name": "Matched", "# of items": matched.length,
+        Description: `A confirmed match between your Eagle data and the listings that have come through from REA. Matched based on the REA ID: the REA source ID against the Eagle REA ID.` +
+          (different ? `\n\nPlease note that there are ${different} listings that matched with REA ID but have a different address. Please highlight anything you would like to remove from the list.` : ""),
+        "Action Needed": "No action needed from you. We will proceed to attach the corresponding data like enquiries, vendors and purchasers to these REA listings." },
+      { "Sheet Name": "Sold to Settled", "# of items": settled.length,
+        Description: settled.length ? `Out of the matched Sold properties, these are the ones that are in 'Settled' status in your old database\n\nWe will be updating these to 'Settled' status in Zenu.`
+          : "No records found that need updating from Sold to Settled. Eagle has no 'Settled' status on its properties.",
+        "Action Needed": settled.length ? "Please let us know if you want to keep these properties as Sold." + (noSettledDate ? `\n${noSettledDate} listings have NO settlement date. Please fill these in if you want them to be updated.` : "") : "No action needed from you." },
+      { "Sheet Name": "Unable to match", "# of items": unable.length,
+        Description: "Unable to find these REA listings in the Eagle extract.",
+        "Action Needed": `No action needed from you. Please note that we will NOT be able to attach any old ${C} data to these.` },
+      { "Sheet Name": "Listing Manual Creation", "# of items": manual.length,
+        Description: `These are the Sold listings in Eagle that don't have a matching REA ID. We will upload these manually to your office.` + (tabs ? `\n\nThe ${tabs} tabs go with this import.` : ""),
+        "Action Needed": "No action needed from you." },
+    ];
+    const reaRows = frames.rea.rows.length, inScope = matched.length + unable.length;
+    return {
+      crm: "eagle", client: C, summary, matched, settled, unable, extraSheets,
+      stats: { reaRows, inScope, outOfScope, matched: matched.length, settled: settled.length, unable: unable.length, differentAddress: different, noSettledDate,
+        blankSourceId: blankSource, oldListings: byRea.size, sharedReaIds: sharedIds, manual: manual.length,
+        manualVendors: vendors ? vendors.length : null, manualBuyers: buyers ? buyers.length : null, eagleProperties: props.size },
+      columns: {
+        matched: ["Indicator", "REA ID", "REA SOURCE_ID", "REA LISTING_STATUS", "REA SALE_METHOD", "REA Full Address", "REA Extracted Listed Date", "REA Extracted Contract Date", "REA Extracted Leased Date",
+          `${C} Listing ID`, `${C} REA ID`, `${C} Status`, `${C} Sale/Lease`, `${C} Authority`, `${C} Property Address`, `${C} Listed Date`, `${C} Contract Date`, `${C} Leased Date`, "Address Check"],
+        settled: ["REA ID", "REA SOURCE_ID", "REA LISTING_STATUS", `${C} Status`, `${C} Listing ID`, `${C} REA ID`, "Settled Date"],
+        unable: REA_UNABLE_COLUMNS,
+        summary: ["Sheet Name", "# of items", "Description", "Action Needed"],
+      },
+    };
+  }
+
+  /** Eagle properties with "Property Address" after id, as the results workbook's listing tab shows it. */
+  function eagleWithAddress(frame, addrFrame) {
+    const G = reaGetter(frame.columns), places = eaglePlaces(addrFrame);
+    const columns = frame.columns.slice();
+    const at = columns.findIndex((c) => String(c).trim().toLowerCase() === "id");
+    columns.splice(at < 0 ? 0 : at + 1, 0, "Property Address");
+    return { columns, rows: frame.rows.map((row) => ({ ...row, "Property Address": eagleAddress(G, row, places.get(reaKey(G(row, "postcode_id")))) })) };
   }
 
   /** An input table with its full address added (Properties: "Full Address" after postcode; REA data: "full add"
@@ -1704,7 +1929,7 @@
       decodeComment, categoriesByContact, agentNames, teamMember1, build: buildAgentbox, linkNotes },
     toFrame, ROLE_HELP, aiFits, shape, isDataLike,
     importPrep: { run: importPrep, toCsv, clean: importPrepClean, stringify: importPrepStringify, MAX_ROWS: IP_MAX_ROWS },
-    reaMatch: { run: reaMatch, kind: reaKind, KINDS: REA_KINDS, CRMS: REA_CRMS, withAddress: reaWithAddress },
+    reaMatch: { run: reaMatch, kind: reaKind, KINDS: REA_KINDS, CRMS: REA_CRMS, withAddress: reaWithAddress, eagleWithAddress, eagleDate },
   };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.DarisEngine = api;

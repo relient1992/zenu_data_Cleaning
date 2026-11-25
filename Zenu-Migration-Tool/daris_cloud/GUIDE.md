@@ -197,26 +197,44 @@ table's ID column (filled and unique, e.g. contact_id); change it under the tabl
   values only when "Let Claude read the rows I ask about" is ticked.
 - The files stay in the page (never uploaded) until you reload it or press Clear / say "clear search".
 
-## REA Matching (Agentbox REA feed vs the old listings)
+## REA Matching (REA feed vs the old listings: Agentbox and Eagle)
 
-The **REA Matching** tab builds the "REA Feed - <client> - Matching Results" workbook for an Agentbox client.
+The **REA Matching** tab builds the "REA Feed - <client> - Matching Results" workbook for an Agentbox or Eagle client.
 
-**Source CRM**: pick the client's old system first. **Agentbox** is built; **Rex**, **VaultRE** and **Eagle** show as coming later (each needs its own export files and matching rules). Switching CRM clears the loaded files.
+**Source CRM**: pick the client's old system first. **Agentbox** and **Eagle** are built; **Rex** and **VaultRE** show as coming later (each needs its own export files and matching rules). Switching CRM clears the loaded files.
 
-**Input files** (drop them or the folder; each is recognised from its columns):
+**Agentbox input files** (drop them or the folder; each is recognised from its columns):
 - **Office REA data**: listings.csv from the REA data export (required).
 - **Listing Sale** and/or **Listing Lease**: listing_sale.csv / listing_lease.csv from the Agentbox system export (at least one).
 - **Properties**: property.csv, for the old addresses and the Address Check.
 - **Contact ID**: the Zenu ID map (source_contact_id -> contact_id). Only copied into the workbook.
 
 **How it matches**
-- REA rows with listing_status Appraisal or Property are out of scope; every other REA row is matched or unable to match.
+- REA rows with listing_status Appraisal or Property, or no listing status, are out of scope; every other REA row is matched or unable to match.
 - Matched = the REA source_id equals an old listing's rea_unique_id (Listing Sale first, then Listing Lease; the first old listing wins a shared ID). IDs saved as numbers and as text match alike; Excel's VLOOKUP missed those (on McConnell, 1,423 listings).
 - **Sold to Settled** = matched rows where REA says Sold and the old CRM says settled, with the old settled date. The Summary says how many have no settled date.
 - **Address Check** on Matched_By SourceID: Same or Different, comparing street number, street name and suburb of the REA address with the old property's address (units and Level / Rear words ignored; a range counts by its first number).
 - **Unable to match** = in-scope REA rows whose source_id no old listing has.
 
 **Workbook sheets**: Summary, Sold to Settled, Matched_By SourceID, Unable to match, then (if ticked) Contact ID, Listing Sale, Listing Lease, Properties (with Full Address) and <office> REA data (with full add). The client name goes in the column names (Mcconnell Listing ID). Dates are dd/mm/yyyy.
+
+### Eagle
+**Input files** (drop the Eagle export folder: the big notes, images, tasks and property_interests files are skipped without being read):
+- **Office REA data**: listings.csv from the REA export (required).
+- **Properties**: properties.csv from the Eagle export (required). Load a top-up's properties file too: it adds to the first (a repeated property id counts once). Vendors, Purchasers, Contracts and Addresses add up the same way.
+- **Addresses**: addresses.csv, for each property's suburb, state and postcode (properties.csv only has a postcode_id) and the Address Check.
+- **Vendors** (vendors.csv), **Purchasers** (purchasers.csv) and **Contracts** (contracts.csv): for the Listing Manual Vendor and Listing Manual Buyer tabs (a purchaser links to its listing through its contract).
+- **Contact ID**: the Zenu ID map. Only copied into the workbook.
+
+**How Eagle matches**
+- Matched = the REA source_id equals an Eagle property's rea_id (properties.csv). Eagle Sale/Lease comes from listing_type (rental = Lease), Authority is Eagle's authority, and the dates are listed_at, sold_date and let_date.
+- Eagle writes dates month first (4/23/2025 = 23/04/2025); DARVIS reads them that way. Opening the CSV in Excel with Australian settings swaps day and month on dates like 9/7/2020.
+- **Sold to Settled**: Eagle has no 'Settled' status, so this is normally empty (the Summary says so).
+- **Address Check**: as for Agentbox, but rural lot numbers (L1, L97) aren't street numbers, and when one side has no street number only the street and suburb are compared.
+- **Listing Manual Creation**: Eagle properties with status Sold whose rea_id isn't anywhere in the REA data, laid out for the manual listing upload (property type, address, rooms, land size and unit, category, contract date, sold price, rea_id). **Listing Manual Vendor** and **Listing Manual Buyer** list those listings' vendors and purchasers.
+- On Manning Valley this reproduced the team's workbook: 1,770 matched, 18 unable, 34 manual listings, 36 vendors, 40 buyers.
+
+**Eagle workbook sheets**: Summary, Sold to Settled, Matched_By SourceID, Unable to match, Listing Manual Creation, Listing Manual Vendor, Listing Manual Buyer, then (if ticked) Contact ID, <client> listing (properties with Property Address) and <office> REA data.
 
 ## Import Prep
 Replicates the Import Prep macro's "Internal Output". Give it the input file (xlsx or csv) and the
