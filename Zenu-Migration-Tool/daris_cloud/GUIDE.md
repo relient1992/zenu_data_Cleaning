@@ -265,6 +265,52 @@ non-ASCII and special characters (a double quote becomes a single quote; ~ ` | a
 removed) and writes one CSV per sheet, split every 15,000 rows. Several files come as a ZIP with a
 report.
 
+## JSON Import (CSV import -> import.json)
+Builds the new JSON import (import.schema.json, schema_version 1, from the import-schema proposal) from
+the Zenu CSV import files. One file per office: enter the Zenu office id. Load one or more CSV, Excel or
+ZIP files with the 171-column template headers; they are treated as one office, and rows with the same
+identifier are merged. It doesn't change the CSV import or any other tool.
+- Each row is split into a contact, listing, task, enquiry, inspection and offer. A Zenu id
+  (zenu_contact_id, zenu_property_id) puts the record in update; otherwise it is created with a projected
+  id (projected_contact_1 ...). An existing record with nothing to change is only linked to.
+- Links: contact_sale_type seller -> the listing's vendor_contact_ids, purchaser -> the contract's
+  buyer_contact_ids; contact_partner_identifier or a shared contact_partnership_id -> relationships (one
+  side only, "Partner" when no type); company + person on one row -> a company contact per company name,
+  the person linked with company_contact_id; zenu_company_id and zenu_solicitor_id link to existing
+  contacts. Tasks and enquiries take the row's contact and listing; inspections and offers need both.
+- Values: dates to yyyy-mm-dd (with Thh:mm when there is a time), True/False to true/false, numbers to
+  numbers, comma lists to lists, | values -> the first in the main key and the rest in extras / one note
+  each, pipeline rating A/B/C/D -> Hot/Warm/Cold, empty columns left out, "delete" -> null in an update.
+- An existing contact only gets its lists added (types, tags, notes, extra emails and phones) unless
+  contact_date_modified is "update". An existing listing only takes vendors, notes, appraisal motivation
+  and the contract dates, gross commission, buyers and sale team.
+- Records the schema would reject are left out (a new contact with no name, an inspection without a
+  start date, an offer without a price) and links to them are dropped. Every case is in the check report.
+- The file is checked against the schema before export (Schema check PASS / errors). Export JSON saves
+  import_<client>_<office id>.json; Export check report saves the issues as CSV.
+- Import Prep removes the | character, so extra emails, phones and multiple notes in one cell are joined.
+  When they matter, convert the file from before Import Prep (the columns are matched by name).
+- From a migration job: on a finished job in the Migration tab, press Convert to JSON import. It lists the
+  job's output workbooks and contact_cleaned.csv (the ones with template columns are ticked; tick "With
+  changes" to use the changed copies), remembers the office id per job, reads the files from the PC through
+  the bridge and opens the result on the JSON Import tab. Save to job folder writes the .json and the check
+  report into the job's "JSON Import" folder. The job's files are only read. Rows with Include in Import
+  File? = No are left out; a listing with no timeline status takes its workbook's status (Appraisal or
+  Prospect workbook); a zenu_company_id or zenu_solicitor_id that is a contact_identifier (as
+  contact_cleaned.csv writes, e.g. 222_c) links to that contact. Needs bridge 1.10.0 (restart the Claude app).
+- New listings with no address (they only appear in vendor, buyer, note or activity rows) are kept but
+  warned about: check that the listing's own row is in the files, or that it should be an existing listing.
+The CRM Preview tab (a simulation) draws an import.json as contact and listing pages laid out like the CRM:
+contact details, activity (notes, inspections, enquiries, offers, tasks), properties, relationships and
+requirements; listing summary, appraisal / prospect, offers, contract, owners and solicitors; and each
+page's Activity snapshot. Records link to each other; existing Zenu records not in the file show as
+"Existing contact #id". Show JSON keys puts the key under every value. Open it with Preview in CRM view on
+the JSON Import result, or load a saved import .json. The rail filters: new / updates, contacts not linked
+to anything, listings with no address, with a contract or with vendors. It reads the JSON only.
+The JSON Mapping tab lists every CSV column with its JSON key, record, status (Mapped, Link, No longer
+imported, Not imported: record exists, Split first), the guide's note and how DARVIS fills any gap, plus
+the row and value rules. Export mapping saves it as an Excel workbook.
+
 ## Roadmap
 The team's CRM build progress (Agentbox, Eagle, VaultRE, ZenuTransfer, Rex ...), shared by everyone
 who opens DARVIS. 100% means Completed.

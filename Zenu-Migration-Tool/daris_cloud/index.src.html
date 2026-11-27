@@ -189,6 +189,127 @@ tr.gap td { text-align: center; color: var(--faint); font-size: 10.5px; letter-s
 .export { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .err { color: var(--alert); font-size: 13px; margin: 8px 0 0; }
 
+/* json import + mapping */
+.ji-pre { margin: 0 0 16px; padding: 12px; max-height: 380px; overflow: auto; border: 1px solid var(--line); background: var(--deck); font: 400 11.5px/1.45 var(--mono); color: var(--ink); white-space: pre; }
+.ji-filters { display: flex; flex-wrap: wrap; gap: 6px; align-self: flex-end; }
+.ji-filters .btn[aria-pressed="true"] { border-color: var(--holo); color: var(--holo); background: var(--holo-soft); }
+td.wrap { white-space: normal; min-width: 16rem; max-width: 40rem; }
+.ji-map { max-height: 560px; overflow: auto; }
+.ji-map th { position: sticky; top: 0; z-index: 1; }
+.ji-darvis { display: block; margin-top: 4px; color: var(--arc); }
+.ji-ex { display: block; margin-top: 3px; color: var(--faint); font: 400 11.5px/1.4 var(--mono); overflow-wrap: anywhere; }
+.ji-rules { margin: 0 0 16px; padding-left: 20px; font-size: 13px; color: var(--ink); max-width: 92ch; }
+.ji-rules li { margin-bottom: 6px; }
+.ji-rules strong { color: #fff; }
+
+/* CRM preview (a light, CRM-like screen inside DARVIS) */
+.sim-host { --s-bg: #F0F2F5; --s-card: #FFFFFF; --s-line: #E3E6EA; --s-ink: #2B2F33; --s-mut: #7A838C; --s-blue: #2F8FE0; --s-slate: #557189; --s-tag: #E8F2FC;
+  color: var(--s-ink); font: 400 13px/1.45 "Open Sans", "Segoe UI", system-ui, sans-serif; }
+.sim-empty { padding: 28px; border: 1px dashed var(--line); color: var(--ink); text-align: center; }
+.sim-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 8px 12px; background: var(--deck); border: 1px solid var(--line); color: var(--ink); font: 400 12px/1.4 var(--mono); }
+.sim-badge { background: var(--arc); color: #1a1200; padding: 2px 8px; font-weight: 700; letter-spacing: .06em; }
+.sim-toggle { margin-left: auto; display: flex; gap: 6px; align-items: center; cursor: pointer; }
+.sim-wrap { display: grid; grid-template-columns: 270px minmax(0, 1fr); border: 1px solid var(--line); border-top: 0; background: var(--s-bg); min-height: 640px; }
+.sim-rail { background: var(--s-card); border-right: 1px solid var(--s-line); display: flex; flex-direction: column; min-width: 0; max-height: 900px; }
+.sim-rail-h { padding: 10px; border-bottom: 1px solid var(--s-line); display: grid; gap: 8px; }
+.sim-seg { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--s-line); border-radius: 4px; overflow: hidden; }
+.sim-seg button { border: 0; background: #fff; padding: 7px 4px; font: inherit; font-size: 12px; color: var(--s-mut); cursor: pointer; }
+.sim-seg button[aria-pressed="true"] { background: var(--s-tag); color: var(--s-blue); font-weight: 600; }
+.sim-find { width: 100%; box-sizing: border-box; padding: 7px 10px; border: 1px solid var(--s-line); border-radius: 16px; background: #F3F4F6; font: inherit; color: var(--s-ink); }
+.sim-rail-list { overflow: auto; flex: 1; }
+.sim-rec { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--s-line); background: #fff; padding: 8px 12px; cursor: pointer; font: inherit; color: var(--s-ink); }
+.sim-rec:hover { background: #F7F9FB; } .sim-rec.on { background: var(--s-tag); box-shadow: inset 3px 0 0 var(--s-blue); }
+.sim-rec-n { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sim-rec-m { display: block; font-size: 11px; color: var(--s-mut); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sim-tag { font-style: normal; font-size: 9.5px; font-weight: 700; padding: 1px 5px; border-radius: 3px; margin-right: 6px; letter-spacing: .04em; }
+.sim-tag.new { background: #E3F5E9; color: #23824A; } .sim-tag.upd { background: #FFF1DC; color: #A0620A; }
+.sim-rail-f { display: flex; justify-content: space-between; align-items: center; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--s-line); font-size: 11px; color: var(--s-mut); }
+.sim-rail-f button, .sim-pager button { border: 0; background: none; color: var(--s-blue); font: 600 11px/1 inherit; cursor: pointer; padding: 4px; }
+.sim-rail-f button:disabled, .sim-pager button:disabled { color: #C5CCD3; cursor: default; }
+.sim-none { color: var(--s-mut); padding: 10px 12px; margin: 0; font-size: 12px; }
+.sim-screen { min-width: 0; overflow: auto; max-height: 900px; container-type: inline-size; }
+.sim-top { background: #fff; border-bottom: 1px solid var(--s-line); padding: 8px; text-align: center; }
+.sim-search { display: inline-block; width: min(260px, 60%); text-align: left; background: #EEF0F2; border-radius: 16px; padding: 5px 14px; color: var(--s-mut); font-size: 12px; }
+.sim-head { display: flex; gap: 12px; align-items: center; background: #fff; padding: 12px 18px; border-bottom: 1px solid var(--s-line); }
+.sim-back { border: 0; background: none; font-size: 18px; color: var(--s-mut); cursor: pointer; padding: 0 4px; }
+.sim-title { font-size: 16px; font-weight: 600; } .sim-sub { font-size: 11px; color: var(--s-blue); }
+.sim-pagetabs { display: flex; justify-content: center; gap: 4px; background: #fff; border-bottom: 1px solid var(--s-line); }
+.sim-pagetabs button { border: 0; background: none; padding: 10px 14px; font: 600 11.5px/1 inherit; color: var(--s-mut); cursor: pointer; border-bottom: 2px solid transparent; }
+.sim-pagetabs button[aria-pressed="true"] { color: var(--s-blue); border-bottom-color: var(--s-blue); }
+.sim-lhead { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; background: #fff; padding: 10px 18px; border-bottom: 1px solid var(--s-line); font-size: 12px; }
+.sim-ltabs { margin-left: auto; display: flex; gap: 4px; }
+.sim-ltabs button { border: 0; background: none; padding: 6px 8px; font: inherit; font-size: 11.5px; color: var(--s-mut); cursor: pointer; border-bottom: 2px solid transparent; }
+.sim-ltabs button[aria-pressed="true"] { color: var(--s-ink); border-bottom-color: var(--s-ink); }
+.sim-body { padding: 14px 18px 24px; }
+.sim-crumbs { display: flex; flex-wrap: wrap; gap: 12px; font-size: 10.5px; text-transform: uppercase; color: var(--s-mut); margin-bottom: 10px; }
+.sim-crumbs a { color: var(--s-mut); text-decoration: none; } .sim-crumbs a:hover { color: var(--s-blue); } .sim-crumbs .on { color: var(--s-ink); }
+.sim-upd.bad { background: #FDECEC; border-color: #F1B9B9; color: #7A1F1F; }
+.sim-upd { background: #FFF6E6; border: 1px solid #F3D9A8; color: #6B4A0E; padding: 8px 12px; margin-bottom: 12px; font-size: 12px; border-radius: 3px; }
+.sim-grid { display: grid; gap: 14px; align-items: start; }
+.sim-grid.c2 { grid-template-columns: minmax(250px, 0.9fr) minmax(0, 1.6fr); }
+.sim-grid.c3 { grid-template-columns: minmax(220px, 0.9fr) minmax(0, 1.5fr) minmax(200px, 0.9fr); }
+.sim-grid > div { display: grid; gap: 14px; min-width: 0; }
+.sim-card { background: var(--s-card); border: 1px solid var(--s-line); border-radius: 3px; min-width: 0; }
+.sim-card-h { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--s-line); font-size: 12px; font-weight: 600; }
+.sim-card-b { padding: 10px 14px; }
+.sim-pad { padding: 16px; color: var(--s-mut); }
+.sim-muted { color: var(--s-mut); font-weight: 400; }
+.sim-row { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 10px; padding: 4px 0; font-size: 12px; }
+.sim-l { font-weight: 600; color: var(--s-ink); } .sim-v { color: #5F6870; overflow-wrap: anywhere; }
+.sim-dash { color: #A9B1B8; }
+.sim-key { display: block; font: 400 10px/1.3 var(--mono); color: #B4580F; background: #FFF3E8; padding: 1px 4px; margin-top: 2px; border-radius: 2px; overflow-wrap: anywhere; width: fit-content; max-width: 100%; }
+.sim-keyline { margin: -4px 0 6px; }
+.sim-card hr { border: 0; border-top: 1px solid var(--s-line); margin: 8px 0; }
+.sim-chiprow { display: flex; gap: 8px; align-items: center; margin: 2px 0 8px; }
+.sim-namechip { background: var(--s-blue); color: #fff; border-radius: 14px; padding: 5px 12px; font-size: 10.5px; font-weight: 700; }
+.sim-small { font-size: 11px; color: var(--s-mut); }
+.sim-rate { display: inline-block; padding: 1px 9px; border-radius: 10px; color: #fff; font-size: 11px; font-weight: 600; background: #999; }
+.sim-rate.hot { background: #B23A48; } .sim-rate.warm { background: #D9822B; } .sim-rate.cold { background: #4C7FB8; }
+.sim-a { color: var(--s-blue); text-decoration: none; } .sim-a:hover { text-decoration: underline; }
+.sim-ext { color: #8A6A2E; border-bottom: 1px dotted #C9A56A; }
+.sim-tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--s-line); }
+.sim-tabs button { flex: 1; border: 0; background: none; padding: 9px 6px; font: inherit; font-size: 12px; color: var(--s-ink); cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; }
+.sim-tabs button small { color: var(--s-mut); }
+.sim-tabs button[aria-pressed="true"] { color: var(--s-blue); border-bottom-color: var(--s-blue); }
+.sim-acts { padding: 4px 14px; }
+.sim-act { display: flex; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--s-line); font-size: 12px; }
+.sim-act:last-child { border-bottom: 0; }
+.sim-act-i { color: var(--s-blue); width: 16px; flex: none; text-align: center; }
+.sim-act-t { flex: 1; min-width: 0; overflow-wrap: anywhere; color: #4A5259; }
+.sim-act-top { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 2px; color: var(--s-ink); }
+.sim-act-top span { font-size: 11px; color: var(--s-ink); white-space: nowrap; }
+.sim-act-sub { margin-bottom: 2px; }
+.sim-pager { display: flex; justify-content: flex-end; gap: 12px; padding: 8px 14px; border-top: 1px solid var(--s-line); }
+.sim-prop, .sim-owner { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--s-line); font-size: 12px; min-width: 0; }
+.sim-prop:last-child, .sim-owner:last-child { border-bottom: 0; }
+.sim-prop > div, .sim-owner > div { min-width: 0; overflow-wrap: anywhere; }
+.sim-av { flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--s-slate); color: #fff; display: inline-grid; place-items: center; font-size: 11px; font-weight: 600; }
+.sim-av.sm { width: 24px; height: 24px; font-size: 10px; margin-right: 6px; vertical-align: middle; }
+.sim-owner .sim-av { background: #E6E9EC; color: var(--s-mut); }
+.sim-mini { display: grid; grid-template-columns: auto 1fr; gap: 1px 10px; font-size: 11px; color: var(--s-blue); margin-top: 3px; }
+.sim-mini span { color: var(--s-ink); }
+.sim-crit { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 7px 0; border-bottom: 1px solid var(--s-line); font-size: 12px; }
+.sim-crit b { width: 100%; } .sim-crit small { color: var(--s-mut); }
+.sim-ltitle { font-size: 15px; margin-bottom: 10px; }
+.sim-status { border: 1px solid #3DA58A; color: #3DA58A; padding: 8px 12px; display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 8px; }
+.sim-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.sim-chips span { border: 1px solid var(--s-line); border-radius: 12px; padding: 3px 10px; font-size: 11px; font-weight: 600; }
+.sim-photo { position: relative; height: 130px; background: #D6D9DD; display: grid; place-items: center; color: #8E979F; font-size: 10.5px; letter-spacing: .05em; }
+.sim-bbc { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(60,64,68,.75); color: #fff; padding: 5px 10px; font-size: 11px; white-space: pre; }
+.sim-contract { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; margin-bottom: 6px; }
+.sim-tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border: 1px solid var(--s-line); margin-bottom: 12px; }
+.sim-tiles div { padding: 8px 4px; text-align: center; font-size: 10.5px; color: var(--s-mut); border-right: 1px solid var(--s-line); }
+.sim-tiles div:last-child { border-right: 0; } .sim-tiles .on { color: var(--s-blue); border-bottom: 2px solid var(--s-blue); display: grid; place-items: center; }
+.sim-tiles b { color: var(--s-ink); font-weight: 600; }
+.sim-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.sim-table th { background: #F5F6F8; color: var(--s-mut); font-weight: 600; font-size: 10.5px; padding: 8px; text-align: left; }
+.sim-table td { padding: 10px 8px; border-top: 1px solid var(--s-line); vertical-align: top; color: #4A5259; }
+.sim-stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); background: #fff; border: 1px solid var(--s-line); margin-bottom: 14px; }
+.sim-stats div { padding: 10px 12px; } .sim-stats small { display: block; font-size: 11px; color: var(--s-mut); } .sim-stats b { font-size: 20px; font-weight: 400; }
+@container (max-width: 1080px) { .sim-grid.c3 { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); } .sim-grid.c3 > div:last-child { grid-column: 1 / -1; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); } }
+@container (max-width: 720px) { .sim-grid.c2, .sim-grid.c3 { grid-template-columns: minmax(0, 1fr); } .sim-tiles, .sim-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 860px) { .sim-wrap { grid-template-columns: 1fr; } .sim-rail { max-height: 320px; border-right: 0; border-bottom: 1px solid var(--s-line); } .sim-table { display: block; overflow-x: auto; } }
+
 /* import prep */
 .ip-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 @container (max-width: 640px) { .ip-grid { grid-template-columns: minmax(0, 1fr); } }
@@ -337,6 +458,9 @@ tr.gap td { text-align: center; color: var(--faint); font-size: 10.5px; letter-s
       <button class="tab" role="tab" id="tab-explore" data-view="explore" aria-selected="false">Search &amp; Export</button>
       <button class="tab" role="tab" id="tab-rea" data-view="rea" aria-selected="false">REA Matching</button>
       <button class="tab" role="tab" id="tab-import-prep" data-view="import-prep" aria-selected="false">Import Prep</button>
+      <button class="tab" role="tab" id="tab-json-import" data-view="json-import" aria-selected="false">JSON Import</button>
+      <button class="tab" role="tab" id="tab-json-map" data-view="json-map" aria-selected="false">JSON Mapping</button>
+      <button class="tab" role="tab" id="tab-crm-preview" data-view="crm-preview" aria-selected="false">CRM Preview</button>
       <button class="tab" role="tab" id="tab-roadmap" data-view="roadmap" aria-selected="false">Roadmap</button>
     </nav>
 
@@ -441,6 +565,7 @@ tr.gap td { text-align: center; color: var(--faint); font-size: 10.5px; letter-s
         <section class="panel" id="mgJob" hidden></section>
         <section class="panel" id="mgChanges" hidden></section>
         <section class="panel" id="mgConsol" hidden></section>
+        <section class="panel" id="mgJson" hidden></section>
         <section class="panel">
           <div class="panel-head"><span class="label">Recent jobs on your PC</span><span class="code" id="mgJobsInfo"></span><button class="btn tiny" id="mgRefresh" type="button" style="margin-left:auto">Refresh</button></div>
           <div class="field" style="margin-bottom:10px"><label class="code" for="mgJobSearch">FIND A CLIENT</label><input type="search" id="mgJobSearch" placeholder="Client name, job id or CRM" autocomplete="off"></div>
@@ -543,6 +668,61 @@ tr.gap td { text-align: center; color: var(--faint); font-size: 10.5px; letter-s
       <section class="panel" id="ipResult" hidden style="margin-top:16px"></section>
     </section>
 
+    <!-- ================= JSON IMPORT ================= -->
+    <section class="view" id="view-json-import" role="tabpanel" aria-labelledby="tab-json-import" hidden>
+      <section class="panel">
+        <div class="panel-head"><span class="label">JSON Import</span><span class="code">IMPORT CSV → IMPORT.JSON · LINKED BY ID · SCHEMA CHECKED</span></div>
+        <div class="say"><p>Turns the Zenu import CSVs (the template Import Prep writes) into one <strong>import.json</strong> for the office, as the import-schema proposal describes. Each row is split into contact, listing, task, enquiry, inspection and offer records, rows with the same identifier are merged, and the records are linked by id: vendors and buyers, partners, companies and solicitors. A Zenu id makes it an update; anything else gets a projected id.</p>
+          <p>The file is checked against the schema before you export it. This doesn't change the CSV import or any other tool. See <strong>JSON Mapping</strong> for where each CSV column goes.</p></div>
+        <label class="drop" id="jiDrop"><strong>Import CSV files for one office</strong><span class="code">CSV · XLSX · ZIP · SEVERAL FILES OK</span><span class="picked" id="jiNames"></span><input id="jiFiles" type="file" accept=".csv,.xlsx,.xls,.zip" multiple></label>
+        <div class="runbar">
+          <div class="field"><label class="code" for="jiOffice">ZENU OFFICE ID</label><input type="number" id="jiOffice" min="1" step="1" placeholder="e.g. 1234"></div>
+          <div class="field"><label class="code" for="jiClient">CLIENT (FILE NAME)</label><input type="text" id="jiClient" placeholder="e.g. Harcourts Craigieburn" maxlength="60" style="width:14rem"></div>
+          <button class="btn tiny" id="jiExample" type="button">Load example</button>
+          <button class="btn tiny danger" id="jiReset" type="button" title="Remove the files and the result">Start new</button>
+          <div class="grow"><button class="btn primary" id="jiRun" type="button" disabled>Convert to JSON</button></div>
+        </div>
+        <p class="err" id="jiErr" hidden></p>
+      </section>
+      <section class="panel" id="jiResult" hidden style="margin-top:16px"></section>
+    </section>
+
+    <!-- ================= JSON MAPPING (reference) ================= -->
+    <section class="view" id="view-json-map" role="tabpanel" aria-labelledby="tab-json-map" hidden>
+      <section class="panel">
+        <div class="panel-head"><span class="label">CSV → JSON mapping</span><span class="code" id="jmCount">CSV COLUMNS</span></div>
+        <div class="say"><p>Where each column of the Zenu CSV import template goes in the JSON import (import.schema.json, version 1), from the proposal's CSV mapping guide, plus how DARVIS fills the gaps the guide leaves open. Reference only.</p></div>
+        <div class="runbar" style="margin-top:0;padding-top:0;border-top:0;margin-bottom:12px">
+          <div class="field"><label class="code" for="jmFind">SEARCH</label><input type="search" id="jmFind" placeholder="column, key or note"></div>
+          <div class="ji-filters" id="jmRecs"></div>
+          <div class="grow"><button class="btn" id="jmExport" type="button">Export mapping (.xlsx)</button></div>
+        </div>
+        <p class="err" id="jmErr" hidden></p>
+        <div class="tablewrap ji-map"><table><thead><tr><th>#</th><th>CSV COLUMN</th><th>JSON KEY</th><th>RECORD</th><th>STATUS</th><th>NOTES</th></tr></thead><tbody id="jmBody"></tbody></table></div>
+        <span class="label section-k">How rows become records</span>
+        <ol class="ji-rules" id="jmSteps"></ol>
+        <span class="label section-k">How values change</span>
+        <div class="tablewrap"><table><thead><tr><th>CSV</th><th>JSON</th></tr></thead><tbody id="jmValues"></tbody></table></div>
+        <span class="label section-k">How DARVIS fills the gaps</span>
+        <ul class="ji-rules" id="jmAssume"></ul>
+      </section>
+    </section>
+
+    <!-- ================= CRM PREVIEW (simulation) ================= -->
+    <section class="view" id="view-crm-preview" role="tabpanel" aria-labelledby="tab-crm-preview" hidden>
+      <section class="panel">
+        <div class="panel-head"><span class="label">CRM preview</span><span class="code">SIMULATION · IMPORT.JSON → CONTACT AND LISTING PAGES</span></div>
+        <div class="say"><p>Shows an import.json as contact and listing pages laid out like the CRM, so you can see where each value lands and how the records link before importing. Tick <strong>Show JSON keys</strong> to see the key under every value. It's a DARVIS simulation: it reads the JSON and sends nothing anywhere.</p></div>
+        <div class="runbar" style="margin-top:0;padding-top:0;border-top:0">
+          <button class="btn" id="cpUseResult" type="button">Use the JSON Import result</button>
+          <label class="btn" for="cpFile" style="cursor:pointer">Load an import .json<input id="cpFile" type="file" accept=".json,application/json" hidden></label>
+          <span class="small" id="cpInfo" style="margin:0"></span>
+        </div>
+        <p class="err" id="cpErr" hidden></p>
+      </section>
+      <div id="cpHost" style="margin-top:16px"></div>
+    </section>
+
     <!-- ================= ROADMAP ================= -->
     <section class="view" id="view-roadmap" role="tabpanel" aria-labelledby="tab-roadmap" hidden>
       <section class="panel">
@@ -588,6 +768,8 @@ tr.gap td { text-align: center; color: var(--faint); font-size: 10.5px; letter-s
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="engine.js"></script>
+<script src="jsonimport.js"></script>
+<script src="crmpreview.js"></script>
 <script>
 "use strict";
 const E = window.DarisEngine;
@@ -1364,6 +1546,423 @@ async function exportImportPrep() {
   return saveFile("import_prep_output.zip", await zip.generateAsync({ type: "blob", compression: "DEFLATE" }));
 }
 
+// =====================================================================
+// JSON IMPORT: the Zenu CSV import (Import Prep's output) -> one import.json for the office, as the import-schema
+// proposal describes (jsonimport.js). A separate tool: nothing else in DARVIS reads or changes it.
+// =====================================================================
+const JX = window.DarisJsonImport;
+const JI = { files: [], result: null, pcIndex: null, job: null, savedFolder: "" };
+const jiPad = (n) => String(n).padStart(2, "0");
+/** A typed cell back to the text the CSV template uses: dates as dd/mm/yyyy [hh:mm] */
+const jiCell = (c) => (c === null || c === undefined ? "" : typeof c === "object" && c.date
+  ? `${jiPad(c.date[2])}/${jiPad(c.date[1])}/${c.date[0]}${c.date[3] || c.date[4] ? ` ${jiPad(c.date[3])}:${jiPad(c.date[4])}` : ""}` : String(c));
+function jiMsg(t) { const e = $("jiErr"); e.hidden = !t; e.textContent = t || ""; }
+function jiReady() { $("jiRun").disabled = !(JI.files.length && JX); }
+function jiRenderFiles() {
+  $("jiNames").innerHTML = JI.files.map((f) => `◆ ${esc(f.name)} · ${fmt(Math.max(0, f.grid.length - 1))} rows`).join("<br>");
+}
+function jiAddGrids(label, name, buf) {
+  const sheets = typedSheets(name, buf).filter((s) => s.grid.length);
+  sheets.forEach((s) => {
+    const n = sheets.length > 1 ? `${label} [${s.sheet}]` : label;
+    JI.files = JI.files.filter((f) => f.name !== n).concat({ name: n, grid: s.grid.map((r) => r.map(jiCell)) });
+  });
+}
+/** CSV, Excel or a ZIP of them (Import Prep's ZIP). Several files are one office: rows with the same identifier merge. */
+async function jiAddFiles(list) {
+  const errs = [];
+  JI.job = null;
+  for (const file of list) {
+    try {
+      if (/\.zip$/i.test(file.name)) {
+        if (!window.JSZip) throw new Error("the ZIP reader didn't load - unzip it and load the files");
+        const zip = await JSZip.loadAsync(await file.arrayBuffer());
+        for (const en of Object.values(zip.files)) {
+          const base = en.name.split("/").pop();
+          if (en.dir || !/\.(csv|xlsx|xls)$/i.test(base) || /^~\$|^\._/.test(base) || /__MACOSX\//.test(en.name)) continue;
+          jiAddGrids(`${file.name}/${en.name}`, base, new Uint8Array(await en.async("arraybuffer")));
+        }
+      } else if (/\.(csv|xlsx|xls)$/i.test(file.name)) jiAddGrids(file.name, file.name, new Uint8Array(await file.arrayBuffer()));
+      else errs.push(`${file.name}: not a CSV, Excel or ZIP file`);
+    } catch (e) { errs.push(`${file.name}: ${e.message}`); }
+  }
+  JI.result = null; $("jiResult").hidden = true; $("jiResult").innerHTML = "";
+  jiRenderFiles(); jiReady(); jiMsg(errs.join(" · "));
+}
+function jiLoadExample() {
+  const header = JX.MAP.map((r) => r[0]);
+  JI.job = null;
+  JI.files = [{ name: "example_import.csv (made up)", grid: [header].concat(EX_JI.map((o) => header.map((h) => o[h] || ""))) }];
+  if (!$("jiOffice").value) $("jiOffice").value = "1234";
+  if (!$("jiClient").value) $("jiClient").value = "Example";
+  JI.result = null; $("jiResult").hidden = true;
+  jiRenderFiles(); jiReady(); jiMsg("");
+}
+function resetJsonImport() {
+  JI.files = []; JI.result = null; JI.job = null; JI.savedFolder = "";
+  $("jiFiles").value = ""; $("jiOffice").value = ""; $("jiClient").value = "";
+  jiRenderFiles(); jiReady(); jiMsg("");
+  $("jiResult").innerHTML = ""; $("jiResult").hidden = true;
+}
+/** Post code -> suburb names from the AU suburb list (criteria suburbs can't be post codes) */
+function jiPostcodes() {
+  if (!S.splitter) return null;
+  if (!JI.pcIndex) {
+    JI.pcIndex = new Map();
+    for (const entries of Object.values(S.splitter.suburbs)) for (const e of entries) {
+      const pc = String(e[2]).padStart(4, "0"), l = JI.pcIndex.get(pc) || [];
+      if (!l.includes(e[0])) l.push(e[0]);
+      JI.pcIndex.set(pc, l);
+    }
+  }
+  return (pc) => JI.pcIndex.get(pc) || [];
+}
+/** property_full_address -> unit, number, street, suburb, state, post code (only when the street columns are empty) */
+function jiSplitAddress(full) {
+  if (!S.splitter) return null;
+  const c = S.splitter.clean(full, "", "", "");
+  if (!c.suburb || c.line1 === full) return null;
+  const line = c.line1.replace(/,\s*$/, "").trim();
+  const m = line.match(/^(?:(?:unit|u|apt|apartment|flat|shop|suite|villa|townhouse)\s*)?([0-9]+[a-z]?|[a-z])\s*\/\s*(\d+[a-z]?(?:\s*-\s*\d+[a-z]?)?)\s+(.+)$/i)
+    || line.match(/^(?:(?:unit|u|apt|apartment|flat|shop|suite|villa|townhouse)\s+([0-9]+[a-z]?)[,\s]+)?(\d+[a-z]?(?:\s*-\s*\d+[a-z]?)?)\s+(.+)$/i);
+  if (!m) return null;
+  return { unit_number: m[1] || "", street_number: m[2].replace(/\s+/g, ""), street_name: m[3], suburb: c.suburb, state: c.state, post_code: c.postcode };
+}
+function runJsonImport() {
+  if (!JX) throw new Error("The JSON import module didn't load. Reload DARVIS.");
+  if (!JI.files.length) throw new Error("Load the import CSV files first.");
+  jiMsg("");
+  const res = JX.convert(JI.files, { officeId: $("jiOffice").value, postcodeSuburbs: jiPostcodes(), splitAddress: S.splitter ? jiSplitAddress : null });
+  res.client = $("jiClient").value.trim();
+  res.filename = `import_${slug(res.client || "office")}_${res.doc.office_id}.json`;
+  res.text = JSON.stringify(res.doc, null, 2);
+  JI.result = res;
+  jiRenderResult();
+  return res;
+}
+function jiRenderResult() {
+  const r = JI.result, c = r.counts, l = r.stats.links, ck = r.check;
+  const warn = r.issues.filter((i) => i.severity === "WARN").reduce((n, i) => n + i.count, 0);
+  const tile = (k, v, cls = "") => `<div class="tile"><div class="k">${k}</div><div class="v ${cls}">${v}</div></div>`;
+  const first = (list) => (list && list.length ? list[0] : null);
+  const d = r.doc;
+  const preview = {};
+  for (const sec of ["contacts", "listings", "tasks", "enquiries", "inspections", "offers"]) for (const kind of ["create", "update"]) {
+    const x = first((d[sec] || {})[kind]);
+    if (x) (preview[sec] || (preview[sec] = {}))[kind] = [x];
+  }
+  const size = new Blob([r.text]).size;
+  $("jiResult").hidden = false;
+  $("jiResult").innerHTML = `<div class="panel-head"><span class="label">JSON import ready</span><span class="code">OFFICE ${esc(d.office_id)} · ${fmt(r.stats.rows)} ROWS · ${(size / 1048576).toFixed(size > 1048576 ? 1 : 2)} MB · ${r.ms} MS</span></div>
+    ${JI.job ? `<p class="small" style="margin:0 0 12px">From migration job <strong>${esc(JI.job.job)}</strong>${JI.job.client ? ` (${esc(JI.job.client)})` : ""}, ${JI.job.source === "changed" ? "the <em>With changes</em> copies" : "the original output files"}.${r.stats.statusFromFile ? ` ${fmt(r.stats.statusFromFile)} listing${r.stats.statusFromFile === 1 ? "" : "s"} with no timeline status took the status of ${r.stats.statusFromFile === 1 ? "its" : "their"} workbook.` : ""}</p>` : ""}
+    <div class="tiles">
+      ${tile("New contacts", fmt(c.contactsCreate), "hot")}${tile("Contact updates", fmt(c.contactsUpdate))}
+      ${tile("New listings", fmt(c.listingsCreate), "hot")}${tile("Listing updates", fmt(c.listingsUpdate))}
+      ${tile("Tasks · enquiries", `${fmt(c.tasks)} · ${fmt(c.enquiries)}`)}${tile("Inspections · offers", `${fmt(c.inspections)} · ${fmt(c.offers)}`)}
+      ${tile("Vendor · buyer links", `${fmt(l.vendors)} · ${fmt(l.buyers)}`)}${tile("Schema check", ck.ok ? "PASS" : `${fmt(ck.total)} ERR`, ck.ok ? "" : "warn")}
+    </div>
+    <p class="small" style="margin:-6px 0 14px">Also linked: ${fmt(l.partners)} partner${l.partners === 1 ? "" : "s"}, ${fmt(l.companies)} contact${l.companies === 1 ? "" : "s"} to ${l.companies === 1 ? "a company" : "companies"}${c.companiesCreated ? ` (${fmt(c.companiesCreated)} company contact${c.companiesCreated === 1 ? "" : "s"} created from company + person rows)` : ""}, ${fmt(l.solicitors)} solicitor${l.solicitors === 1 ? "" : "s"}. ${fmt(c.notes)} notes, ${fmt(c.criteria)} criteria.${r.stats.linkOnly ? ` ${fmt(r.stats.linkOnly)} existing record${r.stats.linkOnly === 1 ? " is" : "s are"} only linked to (nothing to update).` : ""}${r.stats.splitAddresses ? ` ${fmt(r.stats.splitAddresses)} full address${r.stats.splitAddresses === 1 ? "" : "es"} split.` : ""}</p>
+    ${ck.ok ? "" : `<span class="label section-k">Schema check · first problems</span><ul class="issues">${ck.errors.slice(0, 12).map((e) => `<li><span class="sev FAIL">FAIL</span><span><strong>${esc(e.path)}</strong>${JX.errorRecord(d, e.path) ? ` (${esc(JX.errorRecord(d, e.path))})` : ""}: ${esc(e.msg)}</span></li>`).join("")}</ul>`}
+    <span class="label section-k">Check report · ${r.issues.length ? `${fmt(warn)} warning${warn === 1 ? "" : "s"}` : "nothing to report"}</span>
+    <ul class="issues">${r.issues.length ? r.issues.map((i) => `<li><span class="sev ${i.severity}">${i.severity}</span><span>${esc(i.text)} <strong>×${fmt(i.count)}</strong>${i.examples.length ? `<span class="ji-ex">${i.examples.map(esc).join(" · ")}</span>` : ""}</span></li>`).join("")
+      : `<li><span class="sev PASS">PASS</span><span>Every row converted with nothing left out.</span></li>`}</ul>
+    <span class="label section-k">Files</span>
+    <ul class="issues">${r.stats.perFile.map((p) => `<li><span class="sev INFO">FILE</span><span><strong>${esc(p.name)}</strong>: ${p.note ? esc(p.note) : `${fmt(p.rows)} rows, ${p.columns} template columns${p.unknown.length ? `, ${p.unknown.length} other column${p.unknown.length === 1 ? "" : "s"} ignored` : ""}`}</span></li>`).join("")}</ul>
+    <span class="label section-k">Preview · the first record of each list</span>
+    <pre class="ji-pre">${esc(JSON.stringify(Object.assign({ schema_version: d.schema_version, office_id: d.office_id }, preview), null, 2))}</pre>
+    <div class="export"><button class="btn primary" id="jiExport" type="button"${S.downloads ? "" : " disabled"}>Export JSON</button>
+      <button class="btn" id="jiReport" type="button"${S.downloads ? "" : " disabled"}>Export check report</button>
+      ${JI.job ? `<button class="btn" id="jiSaveJob" type="button"${S.mcp ? "" : " disabled"}>Save to job folder</button>` : ""}
+      <button class="btn" id="jiPreview" type="button">Preview in CRM view</button>
+      <span class="code" style="overflow-wrap:anywhere">${esc(r.filename)} · ${esc(r.filename.replace(/\.json$/, "_check.csv"))}</span></div>
+    ${JI.job ? `<div class="statusline" id="jiJobMsg" style="margin:8px 0 0"></div>` : ""}
+    <p class="err" id="jiExportMsg"${S.downloads ? " hidden" : ""}>${S.downloads ? "" : "Downloads aren't available in this view. Open the page in Claude to export."}</p>`;
+}
+async function exportJsonImport() {
+  const r = JI.result;
+  if (!r) throw new Error("Convert the files first.");
+  return saveFile(r.filename, new Blob([r.text], { type: "application/json" }));
+}
+async function exportJsonReport() {
+  const r = JI.result;
+  if (!r) throw new Error("Convert the files first.");
+  return saveFile(r.filename.replace(/\.json$/, "_check.csv"), "\ufeff" + jiReportCsv());
+}
+function jiReportCsv() {
+  const r = JI.result;
+  const rows = [["Severity", "Issue", "Count", "Examples"]];
+  r.check.errors.forEach((e) => rows.push(["SCHEMA", `${e.path}: ${e.msg}`, "1", JX.errorRecord(r.doc, e.path)]));
+  if (r.check.total > r.check.errors.length) rows.push(["SCHEMA", `${r.check.total - r.check.errors.length} more schema problems not listed`, String(r.check.total - r.check.errors.length), ""]);
+  r.issues.forEach((i) => rows.push([i.severity, i.text, String(i.count), i.examples.join(" | ")]));
+  rows.push([], ["Totals", "", "", ""]);
+  Object.entries(r.counts).forEach(([k, v]) => rows.push(["", k, String(v), ""]));
+  Object.entries(r.stats.links).forEach(([k, v]) => rows.push(["", "links: " + k, String(v), ""]));
+  return E.importPrep.toCsv(rows);
+}
+
+// ---------------- JSON Mapping (reference) ----------------
+const JM = { rec: "All", q: "", built: false };
+const JM_STATUS = { "Mapped": "ok", "Link": "", "No longer imported": "miss", "Not imported: record exists": "miss", "Split first": "miss" };
+function renderJsonMap() {
+  if (!JX) { $("jmBody").innerHTML = `<tr><td colspan="6">The JSON import module didn't load. Reload DARVIS.</td></tr>`; return; }
+  if (!JM.built) {
+    JM.built = true;
+    const recs = ["All", ...new Set(JX.MAP.map((r) => r[2]))];
+    $("jmRecs").innerHTML = recs.map((x) => `<button class="btn tiny" type="button" data-jm-rec="${esc(x)}" aria-pressed="${x === JM.rec}">${esc(x)}</button>`).join("");
+    $("jmSteps").innerHTML = JX.STEPS.map(([h, t]) => `<li><strong>${esc(h)}.</strong> ${esc(t)}</li>`).join("");
+    $("jmValues").innerHTML = JX.VALUE_RULES.map(([a, b]) => `<tr><td class="wrap">${esc(a)}</td><td class="wrap">${esc(b)}</td></tr>`).join("");
+    $("jmAssume").innerHTML = JX.ASSUMPTIONS.slice(1).map((t) => `<li>${esc(t)}</li>`).join("");
+  }
+  const q = JM.q.trim().toLowerCase();
+  const rows = JX.MAP.map((r, i) => [i + 1, ...r]).filter((r) => (JM.rec === "All" || r[3] === JM.rec) && (!q || r.slice(1).join(" ").toLowerCase().includes(q)));
+  $("jmBody").innerHTML = rows.length ? rows.map(([n, col, key, rec, st, note, dv]) => `<tr><td>${n}</td><td>${esc(col)}</td><td>${key ? esc(key) : "—"}</td><td>${esc(rec)}</td>
+    <td><span class="chip ${JM_STATUS[st] || ""}">${esc(st)}</span></td><td class="wrap">${esc(note)}${dv ? `<span class="ji-darvis">DARVIS: ${esc(dv)}</span>` : ""}</td></tr>`).join("")
+    : `<tr><td colspan="6">No column matches.</td></tr>`;
+  $("jmCount").textContent = rows.length === JX.MAP.length ? `${JX.MAP.length} CSV COLUMNS` : `${rows.length} OF ${JX.MAP.length} CSV COLUMNS`;
+  document.querySelectorAll("[data-jm-rec]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.jmRec === JM.rec));
+}
+async function exportJsonMap() {
+  if (!window.XLSX) throw new Error("The Excel writer didn't load.");
+  const wb = XLSX.utils.book_new();
+  const sheet = (name, rows, widths) => { const ws = XLSX.utils.aoa_to_sheet(rows); ws["!cols"] = widths.map((w) => ({ wch: w })); ws["!autofilter"] = { ref: ws["!ref"] }; XLSX.utils.book_append_sheet(wb, ws, name); };
+  sheet("CSV to JSON", [["#", "CSV column", "JSON key", "Record", "Status", "Notes (import guide)", "How DARVIS handles it"]].concat(JX.MAP.map((r, i) => [i + 1, ...r])), [5, 44, 52, 11, 26, 70, 70]);
+  sheet("Rows to records", [["Step", "Rule"]].concat(JX.STEPS), [40, 110]);
+  sheet("Value rules", [["CSV", "JSON"]].concat(JX.VALUE_RULES), [70, 80]);
+  sheet("DARVIS rules", [["How DARVIS fills the gaps"]].concat(JX.ASSUMPTIONS.slice(1).map((t) => [t])), [140]);
+  return saveFile("Zenu CSV to JSON import mapping.xlsx", new Blob([xlWrite(wb)]));
+}
+
+/** Made-up rows (the proposal's sample, as CSV), for Load example */
+const EX_JI = [
+  { contact_identifier: "274bpl1n", contact_title: "Mr", contact_first_name: "George", contact_surname: "Clooney", contact_name_on_letters: "George Clooney", contact_type: "Buyer", contact_tags: "Superhero",
+    contact_email_address: "george.clooney@zenu.com.au", contact_mobile: "0420 000 000", contact_mailing_address_line1: "191 Collins Street", contact_mailing_address_suburb: "Melbourne",
+    contact_mailing_address_state: "VIC", contact_mailing_address_postcode: "3000", contact_mailing_address_country: "Australia", contact_rating: "Hot", contact_enquiry_source: "Web Enquiry",
+    contact_team_member_1: "Daryl Dixon", contact_partner_identifier: "qoiznskb", contact_partnership_type: "Wife", contact_criteria_sale_method: "Sale", contact_criteria_category: "Residential",
+    contact_criteria_property_type: "House", contact_criteria_price_from: "250000", contact_criteria_price_to: "350000", contact_criteria_bedrooms: "2", contact_criteria_bathrooms: "2",
+    contact_criteria_carspaces: "1", contact_criteria_suburbs: "Melbourne", contact_notes: "Inspected 123 Sample St and showed interest", contact_note_created_date: "01/06/2017",
+    contact_note_team_member: "Daryl Dixon", contact_sale_type: "seller", property_identifier: "tv448drb", property_unit_number: "33", property_street_number: "31-33",
+    property_street_name: "Aughtie Drive", property_suburb: "Albert Park", property_state: "VIC", property_postcode: "3206", property_country: "Australia", property_sale_method: "Sale",
+    property_category: "Residential", property_type: "Unit", property_timeline_status: "Prospect", property_bedrooms: "4", property_bathrooms: "3", property_team_member_1: "Daryl Dixon",
+    property_pipeline_rating: "A", property_last_listed_by_agency: "Real Estate Group", property_last_listed_by_agent: "John Doe",
+    task_identifier: "t7k2m9qa", task_subject: "Call George about the Aughtie Drive unit", task_notes: "Follow up after his inspection", task_status: "Active", task_date_due: "08/06/2017 09:00", task_team_member_1: "Daryl Dixon",
+    enquiry_identifier: "e4p8w1zc", enquiry_notes: "Asked for the contract of sale", enquiry_status: "Completed", enquiry_source: "realestate.com.au", enquiry_date_created: "10/05/2017 14:30", enquiry_team_member_1: "Daryl Dixon",
+    inspection_identifier: "i9d3h6vr", inspection_is_private: "True", inspection_start_date: "01/06/2017 10:00", inspection_notes: "Liked the kitchen, wants a second look", inspection_is_interested: "Yes", inspection_feedback_price: "580000", inspection_team_member_1: "Daryl Dixon" },
+  { contact_identifier: "qoiznskb", contact_title: "Mrs", contact_first_name: "Scarlett", contact_surname: "Johansson", contact_name_on_letters: "Scarlett Johansson", contact_type: "Vendor",
+    contact_email_address: "scarlett.johansson@zenu.com.au", contact_mobile: "0430 111 111", contact_rating: "Warm", contact_enquiry_source: "Referral", contact_team_member_1: "Saul Hudson", contact_sale_type: "purchaser",
+    property_identifier: "utiay9wr", property_street_number: "1", property_street_name: "Convention Centre Place", property_suburb: "Southbank", property_state: "VIC", property_postcode: "3006", property_country: "Australia",
+    property_sale_method: "Sale", property_category: "Residential", property_type: "House", property_timeline_status: "Settled", property_bedrooms: "5", property_bathrooms: "3", property_team_member_1: "Saul Hudson",
+    property_contract_date: "22/03/2017", property_unconditional_date: "30/03/2017", property_settlement_date: "01/06/2017", property_sold_price: "740000", property_sale_gross_commission: "14800",
+    property_sale_team_member: "Daryl Dixon", property_sale_team_member_role: "Seller", property_sale_team_member_recognition_percentage: "100", property_sale_team_member_recognition_amount: "2000",
+    property_notes: "Sold for a great price!", property_note_created_date: "01/06/2017", property_note_team_member: "Daryl Dixon" },
+  { contact_identifier: "rt5mq2ze", contact_first_name: "Wile", contact_surname: "Coyote", contact_is_company: "True", contact_company_name: "ACME Imports", contact_company_position: "Buyer",
+    contact_tags: "Dodgy", contact_mailing_address_line1: "110-160 Spring Street", contact_mailing_address_suburb: "East Melbourne", contact_mailing_address_state: "VIC", contact_mailing_address_postcode: "3002",
+    contact_mailing_address_country: "Australia", contact_team_member_1: "Daryl Dixon" },
+  { contact_identifier: "c6miiapp", zenu_contact_id: "1017300", contact_date_modified: "update", contact_rating: "Cold", contact_type: "Landlord", contact_tags: "High Roller, Millionaire",
+    contact_mobile: "0440 222 222", contact_mailing_address_line2: "delete", contact_notes: "Will be in the market in six months after renovations are complete", contact_note_created_date: "01/06/2017",
+    contact_note_team_member: "Saul Hudson", contact_sale_type: "seller", property_identifier: "qmakeh73", zenu_property_id: "359521", property_pipeline_rating: "A" },
+  { contact_identifier: "x277957", zenu_contact_id: "277957", property_identifier: "x359917", zenu_property_id: "359917", inspection_identifier: "i2b7n4kx", inspection_is_private: "False",
+    inspection_start_date: "29/04/2017 11:00", inspection_end_date: "29/04/2017 11:30", inspection_is_interested: "Maybe", inspection_team_member_1: "Saul Hudson" },
+  { contact_identifier: "x277957", zenu_contact_id: "277957", property_identifier: "tv448drb", offer_identifier: "o5s1j8fy", offer_price: "620000", offer_terms: "Subject to finance",
+    offer_date: "02/05/2017 16:00", offer_team_member_1: "Saul Hudson" },
+];
+
+$("jiFiles").addEventListener("change", (e) => { jiAddFiles(e.target.files); e.target.value = ""; });
+const jiDrop = $("jiDrop");
+["dragenter", "dragover"].forEach((t) => jiDrop.addEventListener(t, (e) => { e.preventDefault(); jiDrop.classList.add("over"); }));
+["dragleave", "drop"].forEach((t) => jiDrop.addEventListener(t, (e) => { e.preventDefault(); jiDrop.classList.remove("over"); }));
+jiDrop.addEventListener("drop", (e) => jiAddFiles(e.dataTransfer.files));
+$("jmFind").addEventListener("input", (e) => { JM.q = e.target.value; renderJsonMap(); });
+document.addEventListener("click", async (e) => {
+  const t = e.target;
+  try {
+    if (t.closest("#jiRun")) runJsonImport();
+    else if (t.closest("#jiExample")) jiLoadExample();
+    else if (t.closest("#jiReset")) resetJsonImport();
+    else if (t.closest("#jiExport")) await exportJsonImport();
+    else if (t.closest("#jiReport")) await exportJsonReport();
+    else if (t.closest("[data-jm-rec]")) { JM.rec = t.closest("[data-jm-rec]").dataset.jmRec; renderJsonMap(); }
+    else if (t.closest("#jmExport")) await exportJsonMap();
+  } catch (err) {
+    if (t.closest("#view-json-map")) { const m = $("jmErr"); m.hidden = false; m.textContent = err.message; }
+    else jiMsg(err.message);
+  }
+});
+
+// ---------------- Migration job -> JSON import ----------------
+// Reads a finished job's output workbooks (and contact_cleaned.csv) from the PC through the bridge, converts them on the
+// JSON Import tab, and can save the import.json back into the job's "JSON Import" folder. The job's files are only read.
+const MJ = { job: null, src: null, source: "original", pick: new Set(), busy: false };
+function mjHide() { Object.assign(MJ, { job: null, src: null, pick: new Set(), busy: false }); const el = $("mgJson"); el.hidden = true; el.innerHTML = ""; }
+function mjOffice(job, v) {
+  try { if (v === undefined) return localStorage.getItem("darvis.jsonOffice." + job) || ""; localStorage.setItem("darvis.jsonOffice." + job, v); } catch (e) { /* per-viewer only */ }
+  return "";
+}
+function mjHits(cols) { const k = new Set(JX ? JX.MAP.map((r) => r[0]) : []); return (cols || []).filter((c) => k.has(String(c).trim().toLowerCase())).length; }
+/** The listing status a workbook stands for, used only when a row's property_timeline_status is empty */
+function mjStatus(f) {
+  const cols = (f.columns || []).map((c) => String(c).trim().toLowerCase());
+  if (!cols.includes("property_identifier")) return "";
+  return /apprais/i.test(f.file) ? "Appraisal" : /prospect/i.test(f.file) ? "Prospect" : "";
+}
+function mjErr(t) { const e = $("mjErr"); if (e) { e.hidden = !t; e.textContent = t || ""; } }
+function mjProgress(t) { const e = $("mjProg"); if (e) e.innerHTML = t ? `<span class="scan"></span>${esc(t)}` : ""; }
+const mjTick = () => new Promise((ok) => setTimeout(ok, 0));
+async function mjOpen(source) {
+  if (!M.job) return;
+  const job = M.job, el = $("mgJson");
+  el.hidden = false;
+  el.innerHTML = `<div class="panel-head"><span class="label">JSON import from this job</span></div><div class="statusline"><span class="scan"></span>Reading the job's file list…</div>`;
+  el.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  let r;
+  try { r = await bridge("json_sources", { job_id: job, source: source || "original" }); }
+  catch (e) { el.innerHTML = `<div class="panel-head"><span class="label">JSON import from this job</span></div><p class="small">${esc(ocBridgeMsg(e))}</p>`; return; }
+  if (M.job !== job) return;
+  Object.assign(MJ, { job, src: r, source: r.source, pick: new Set(r.files.filter((f) => !f.error && mjHits(f.columns) >= 3).map((f) => f.file)) });
+  mjRender();
+}
+function mjRender() {
+  const r = MJ.src, el = $("mgJson");
+  if (!r) return;
+  const office = $("mjOffice") ? $("mjOffice").value : mjOffice(MJ.job);
+  const rows = r.files.map((f) => {
+    const hits = f.error ? 0 : mjHits(f.columns), st = mjStatus(f);
+    return `<tr><td><input type="checkbox" data-mj-file="${esc(f.file)}"${MJ.pick.has(f.file) ? " checked" : ""}${f.error || MJ.busy ? " disabled" : ""} aria-label="Use ${esc(f.file)}"></td>
+      <td>${esc(f.file)}${f.kind === "contacts" ? ` <span class="code">CONTACTS</span>` : ""}</td><td>${f.rows === undefined || f.rows === null ? "—" : fmt(f.rows)}</td><td>${f.size_mb}</td>
+      <td>${f.error ? `<span class="sev FAIL">${esc(f.error)}</span>` : hits >= 3 ? fmt(hits) : `<span class="sev WARN">${fmt(hits)}</span>`}</td><td>${st ? esc(st) : "—"}</td></tr>`;
+  }).join("");
+  el.innerHTML = `<div class="panel-head"><span class="label">JSON import from this job</span><span class="code">${esc(MJ.job)} · ${fmt(r.files.length)} FILES</span><button class="btn tiny" type="button" id="mjClose" style="margin-left:auto">Close</button></div>
+    <div class="say"><p>Turns this job's output workbooks${r.files.some((f) => f.kind === "contacts") ? " and the cleaned contacts (contact_cleaned.csv)" : ""} into one <strong>import.json</strong> for the office, with the records linked by id, on the <strong>JSON Import</strong> tab. The files are read from your PC and nothing in the job changes. The files with import template columns are ticked.</p>
+      <p>Rows marked No in <em>Include in Import File?</em> are left out. A listing with no timeline status takes the status of its workbook (Appraisal or Prospect).</p></div>
+    ${r.has_changed ? `<label class="toggle" style="margin-bottom:10px"><input type="checkbox" id="mjChanged"${MJ.source === "changed" ? " checked" : ""}${MJ.busy ? " disabled" : ""}><span>Use the <em>With changes</em> copies (your value changes)</span></label>` : ""}
+    <div class="tablewrap"><table><thead><tr><th></th><th>FILE</th><th>ROWS</th><th>MB</th><th>TEMPLATE COLUMNS</th><th>STATUS IF EMPTY</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="runbar">
+      <div class="field"><label class="code" for="mjOffice">ZENU OFFICE ID</label><input type="number" id="mjOffice" min="1" step="1" placeholder="e.g. 1234" value="${esc(office)}"${MJ.busy ? " disabled" : ""}></div>
+      <span class="small" style="margin:0">${fmt(MJ.pick.size)} file${MJ.pick.size === 1 ? "" : "s"} ticked</span>
+      <div class="grow"><button class="btn primary" id="mjRun" type="button"${MJ.busy || !MJ.pick.size ? " disabled" : ""}>Convert to JSON</button></div></div>
+    <div class="statusline" id="mjProg" style="margin:8px 0 0"></div>
+    ${r.saved.length ? `<span class="label section-k">Saved in the job's JSON Import folder</span><div class="pchips">${r.saved.map((s) => `<span class="chip">${esc(s.file)} · ${s.size_mb} MB · ${esc(s.modified)}</span>`).join("")}</div>
+      <div class="row-btns" style="margin-top:8px"><button class="btn tiny" type="button" id="mjOpenFolder">Open JSON Import folder</button></div>` : ""}
+    <p class="err" id="mjErr" hidden></p>`;
+}
+async function mjRun() {
+  const office = ($("mjOffice").value || "").trim();
+  if (!/^\d+$/.test(office) || Number(office) < 1) throw new Error("Enter the Zenu office id (a whole number) first.");
+  if (!MJ.pick.size) throw new Error("Tick at least one file.");
+  if (!JX) throw new Error("The JSON import module didn't load. Reload DARVIS.");
+  mjOffice(MJ.job, office);
+  const job = MJ.job, source = MJ.source, files = MJ.src.files.filter((f) => MJ.pick.has(f.file));
+  MJ.busy = true; mjRender(); mjErr("");
+  let done = false;
+  try {
+    const out = [];
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i], parts = [];
+      let chunks = f.chunks || 1;
+      for (let c = 0; c < chunks; c++) {
+        mjProgress(`Reading ${f.file} (${i + 1} of ${files.length})${chunks > 1 ? ` · part ${c + 1} of ${chunks}` : ""}…`);
+        const x = await bridge("job_file_chunk", { job_id: job, file: f.file, index: c, source: f.kind === "output" ? source : "original" });
+        chunks = x.chunks; parts.push(fromB64(x.data));
+      }
+      const buf = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+      parts.reduce((at, p) => (buf.set(p, at), at + p.length), 0);
+      mjProgress(`Opening ${f.file} (${i + 1} of ${files.length})…`); await mjTick();
+      const sheets = typedSheets(f.file, buf).filter((s) => s.grid.length), st = mjStatus(f);
+      sheets.forEach((s) => out.push({ name: sheets.length > 1 ? `${f.file} [${s.sheet}]` : f.file, grid: s.grid.map((row) => row.map(jiCell)), status: st }));
+    }
+    if (MJ.job !== job) return;
+    mjProgress("Converting and checking against the schema…"); await mjTick();
+    const client = (M.last && M.last.job_id === job && M.last.client) || MJ.src.client || "";
+    resetJsonImport();
+    JI.files = out; JI.job = { job, client, source };
+    $("jiOffice").value = office; $("jiClient").value = client;
+    jiRenderFiles(); jiReady();
+    runJsonImport();
+    done = true;
+    showView("json-import");
+    $("jiResult").scrollIntoView({ block: "start" });
+  } finally {
+    MJ.busy = false;
+    if (MJ.job === job) { mjRender(); if (done) mjProgress(""); }
+  }
+}
+/** Save the import.json and its check report into the job's "JSON Import" folder on the PC */
+async function jiSaveToJob() {
+  const r = JI.result, j = JI.job;
+  if (!r || !j) throw new Error("Convert a migration job's files first.");
+  const msg = (t) => { const e = $("jiJobMsg"); if (e) e.innerHTML = t; };
+  const btn = $("jiSaveJob"); if (btn) btn.disabled = true;
+  try {
+    const put = async (name, text, label) => {
+      const bytes = new TextEncoder().encode(text), CH = 700000, total = Math.max(1, Math.ceil(bytes.length / CH));
+      let last;
+      for (let i = 0; i < total; i++) {
+        msg(`<span class="scan"></span>Saving ${label}${total > 1 ? ` (part ${i + 1} of ${total})` : ""}…`);
+        last = await bridge("save_json_import", { job_id: j.job, file: name, index: i, total, data: toB64(bytes.subarray(i * CH, (i + 1) * CH)) });
+      }
+      return last;
+    };
+    const a = await put(r.filename, r.text, "the JSON");
+    await put(r.filename.replace(/\.json$/, "_check.csv"), "\ufeff" + jiReportCsv(), "the check report");
+    JI.savedFolder = a.folder;
+    msg(`Saved <strong>${esc(r.filename)}</strong> (${a.size_mb} MB) and the check report in <span class="mono">${esc(a.folder)}</span>. <button class="btn tiny" type="button" id="jiOpenJobFolder">Open folder</button>`);
+    if (MJ.job === j.job) mjOpen(MJ.source);
+  } catch (e) { msg(""); throw e; }
+  finally { if (btn) btn.disabled = false; }
+}
+document.addEventListener("click", async (e) => {
+  const t = e.target;
+  try {
+    if (t.closest("#mgToJson")) await mjOpen("original");
+    else if (t.closest("#mjClose")) mjHide();
+    else if (t.closest("#mjRun")) await mjRun();
+    else if (t.closest("#mjOpenFolder")) await bridge("open_folder", { path: MJ.src.json_folder });
+    else if (t.closest("#jiSaveJob")) await jiSaveToJob();
+    else if (t.closest("#jiOpenJobFolder")) await bridge("open_folder", { path: JI.savedFolder });
+  } catch (err) {
+    if (t.closest("#view-json-import")) jiMsg(err.message || String(err));
+    else if ($("mjErr")) mjErr(err.message || String(err));
+    else mgErr(err.message || String(err));
+  }
+});
+document.addEventListener("change", (e) => {
+  const t = e.target;
+  if (t.matches("[data-mj-file]")) { t.checked ? MJ.pick.add(t.dataset.mjFile) : MJ.pick.delete(t.dataset.mjFile); mjRender(); }
+  if (t.id === "mjChanged") mjOpen(t.checked ? "changed" : "original").catch((err) => mjErr(err.message));
+});
+
+// ---------------- CRM preview (simulation of where the import.json lands) ----------------
+const CP = { view: null };
+function cpMsg(t) { const e = $("cpErr"); e.hidden = !t; e.textContent = t || ""; }
+function cpView() { if (!CP.view && window.DarisCrmPreview) CP.view = DarisCrmPreview.create($("cpHost")); return CP.view; }
+function cpShow(doc, label) {
+  const v = cpView();
+  if (!v) throw new Error("The CRM preview didn't load. Reload DARVIS.");
+  if (!doc || typeof doc !== "object" || (!doc.contacts && !doc.listings)) throw new Error("That JSON has no contacts or listings to show.");
+  cpMsg("");
+  v.load(doc, label);
+  showView("crm-preview");
+}
+function cpUseResult() {
+  if (!JI.result) throw new Error("Nothing converted yet: convert files on the JSON Import tab first (or load an import .json here).");
+  cpShow(JI.result.doc, JI.result.filename);
+  $("cpInfo").textContent = `From the JSON Import result · schema check ${JI.result.check.ok ? "PASS" : JI.result.check.total + " errors"}`;
+}
+async function cpLoadFile(file) {
+  let doc;
+  try { doc = JSON.parse(await file.text()); } catch (e) { throw new Error(`${file.name} isn't valid JSON: ${e.message}`); }
+  const ck = JX ? JX.validate(doc) : null;
+  cpShow(doc, file.name);
+  $("cpInfo").textContent = ck ? `${file.name} · schema check ${ck.ok ? "PASS" : ck.total + " errors (shown anyway)"}` : file.name;
+}
+$("cpFile").addEventListener("change", (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) cpLoadFile(f).catch((err) => cpMsg(err.message)); });
+document.addEventListener("click", (e) => {
+  const t = e.target;
+  try {
+    if (t.closest("#jiPreview")) cpUseResult();
+    else if (t.closest("#cpUseResult")) cpUseResult();
+  } catch (err) { if (t.closest("#view-json-import")) jiMsg(err.message); else cpMsg(err.message); }
+});
+
 // ---------------- Roadmap (shared) ----------------
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "crm";
 function renderRoad() {
@@ -1567,6 +2166,7 @@ async function mgOpenJob(id) {
   $("mgJob").scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
 }
 function mgRenderJob(s) {
+  if (typeof MJ !== "undefined" && MJ.job && MJ.job !== s.job_id) mjHide();
   M.last = s;
   const el = $("mgJob"), p = s.progress || {}, pct = Math.round(Number(p.percent) || 0);
   const cls = s.state === "done" ? "done" : s.state === "failed" ? "fail" : "";
@@ -1588,6 +2188,7 @@ function mgRenderJob(s) {
     ${recon}
     <div class="row-btns" style="margin-top:14px">
       <button class="btn tiny" type="button" id="mgOpenFolder">Open job folder</button>
+      ${s.state === "done" ? `<button class="btn tiny" type="button" id="mgToJson" title="Turn this job's output files into one import.json (JSON Import tab)">Convert to JSON import</button>` : ""}
       ${s.state !== "running" ? `<button class="btn tiny" type="button" id="mgRecon">${rc ? "Reconcile again" : "Run reconciliation"}</button>` : ""}
       <button class="btn tiny ai" type="button" data-prompt="Explain how job ${esc(s.job_id)} went and what I should check">Ask DARVIS about this job</button>
       ${s.state !== "running" ? `<button class="btn tiny danger" type="button" id="mgNewJob">Start a new migration</button>` : ""}</div>`;
@@ -1955,12 +2556,13 @@ function flash(text, bad) {
   st.innerHTML = `<span style="color:${bad ? "var(--alert)" : "var(--arc)"};letter-spacing:.02em;text-transform:none;font:500 13px/1.4 var(--body)">${esc(text)}</span>`;
 }
 function setPill(id, text, cls) { const p = $(id); p.className = "pill " + (cls || ""); p.querySelector("b").textContent = text; }
-const VIEWS = ["clean", "migration", "explore", "rea", "import-prep", "roadmap"];
+const VIEWS = ["clean", "migration", "explore", "rea", "import-prep", "json-import", "json-map", "crm-preview", "roadmap"];
 function showView(v) {
   if (!VIEWS.includes(v)) v = "clean";
   VIEWS.forEach((x) => { $("view-" + x).hidden = x !== v; $("tab-" + x).setAttribute("aria-selected", x === v); });
   if (location.hash !== "#" + v) history.replaceState(null, "", "#" + v);
   if (v === "roadmap") renderRoad();
+  if (v === "json-map") renderJsonMap();
   if (v === "migration" && !M.checked) mgCheck();
 }
 
@@ -2812,10 +3414,10 @@ function tools(m) {
           ...(r.result && r.result.count !== undefined ? { result: { count: r.result.count } } : {}), values_hidden: true,
           note: "The answer table is shown to the user under your reply. Say it's there; don't guess values. To see values yourself the user ticks 'Let Claude read the rows I ask about'." };
       } },
-    { name: "start_new", description: "Clear a tab so the user can start a new client: 'clean' (files, mapping, results), 'migration' (folder, rules, options, job panel; a running job keeps running on the PC), 'explore' (Search & Export files and results), 'rea' (REA Matching files and result), 'import-prep' (both files and the result) or 'all'. Only when the user asks to clear, reset or start new.",
-      inputSchema: { type: "object", properties: { area: { type: "string", enum: ["clean", "migration", "explore", "rea", "import-prep", "all"] } }, required: ["area"] },
+    { name: "start_new", description: "Clear a tab so the user can start a new client: 'clean' (files, mapping, results), 'migration' (folder, rules, options, job panel; a running job keeps running on the PC), 'explore' (Search & Export files and results), 'rea' (REA Matching files and result), 'import-prep' (both files and the result), 'json-import' (JSON Import files and result) or 'all'. Only when the user asks to clear, reset or start new.",
+      inputSchema: { type: "object", properties: { area: { type: "string", enum: ["clean", "migration", "explore", "rea", "import-prep", "json-import", "all"] } }, required: ["area"] },
       execute: ({ area }) => { const done = startNew(area); act("Cleared " + done.join(", ")); return "Cleared: " + done.join(", "); } },
-    { name: "open_tab", description: "Show a tab: 'clean', 'migration', 'explore' (Search & Export), 'rea' (REA Matching), 'import-prep' or 'roadmap'.",
+    { name: "open_tab", description: "Show a tab: 'clean', 'migration', 'explore' (Search & Export), 'rea' (REA Matching), 'import-prep', 'json-import' (CSV import -> import.json for the new JSON import; a finished migration job's 'Convert to JSON import' button loads its output files there), 'json-map' (CSV column -> JSON key reference), 'crm-preview' (the import.json drawn as CRM contact and listing pages, a simulation) or 'roadmap'.",
       inputSchema: { type: "object", properties: { tab: { type: "string", enum: VIEWS } }, required: ["tab"] }, execute: ({ tab }) => { showView(tab); return "ok"; } },
   ];
   // Claude may accept only so many tools: most useful first, so a cut only drops the least used
@@ -3678,6 +4280,7 @@ function resetMigration() {
   $("mgJob").innerHTML = ""; $("mgJob").hidden = true;
   clearInterval(M.ocPoll); M.oc = null; $("mgChanges").innerHTML = ""; $("mgChanges").hidden = true;
   clearInterval(M.csPoll); M.cs = null; $("mgConsol").innerHTML = ""; $("mgConsol").hidden = true;
+  mjHide();
   mgErr(""); mgReady();
   if (wasRunning) flashMg(`Cleared. Job ${wasRunning} keeps running on your PC; open it from Recent jobs.`);
   else flashMg("Cleared. Choose the next client's export folder in step 1.");
@@ -3705,6 +4308,7 @@ function startNew(area) {
   if (a === "explore" || a === "all") { resetExplore(); done.push("Search & Export"); }
   if (a === "rea" || a === "all") { resetRea(); done.push("REA Matching"); }
   if (a === "import-prep" || a === "all") { resetImportPrep(); done.push("Import Prep"); }
+  if (a === "json-import" || a === "all") { resetJsonImport(); done.push("JSON Import"); }
   if (!done.length) throw new Error("Nothing to clear on the Roadmap. Say which tab: contact cleaning, migration, search & export or import prep.");
   if (a !== "all") showView(a);
   return done;

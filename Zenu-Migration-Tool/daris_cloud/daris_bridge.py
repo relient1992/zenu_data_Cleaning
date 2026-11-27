@@ -24,7 +24,7 @@ from datetime import datetime
 PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 UPLOAD_DIR = os.path.join(PROJECT, "client_migrations")
 HOME = os.path.expanduser("~")
-VERSION = "1.9.0"
+VERSION = "1.10.0"
 # The classic Job Tracker's database (job_tracker.py): read only, for client names of older jobs
 TRACKER_DB = os.path.join(os.environ.get("TRACKER_DB_DIR", r"C:\Users\Daryl\OneDrive - Zenu Realestate Pty Ltd\Documents\sql"),
                           "db_job_tracker.db")
@@ -1537,6 +1537,106 @@ def t_open_folder(a):
     return {"opened": "", "path": d, "note": "Open this folder yourself."}
 
 
+# ---------------------------------------------------------------- JSON import (the page converts; files are read and saved here)
+JSON_DIR = "JSON Import"
+
+
+def _job_base(d, source):
+    if source == "changed":
+        base = os.path.join(d, CHANGED_DIR)
+        if not os.path.isdir(base):
+            raise ValueError("This job has no 'With changes' copies.")
+        return base
+    return d
+
+
+def _csv_header(path):
+    with open(path, encoding="utf-8-sig", errors="replace", newline="") as f:
+        return [str(h).strip() for h in next(csv.reader(f), [])]
+
+
+def t_json_sources(a):
+    """The files a JSON import can be made from: the job's output workbooks (original or 'With changes') and the
+    cleaned contacts (contact_cleaned.csv), with their columns, sizes and chunk counts."""
+    job_id, d = job_dir(a.get("job_id"))
+    if job_state(job_id, d)[3] == "running":
+        raise ValueError("The migration is still running.")
+    source = "changed" if a.get("source") == "changed" else "original"
+    base = _job_base(d, source)
+    files = []
+    for name in output_xlsx(base):
+        p = os.path.join(base, name)
+        size = os.path.getsize(p)
+        item = {"file": name, "kind": "output", "size": size, "size_mb": mb(size), "chunks": max(1, -(-size // HIST_CHUNK))}
+        try:
+            _sheet, cols, rows = read_header(p)
+            item.update(columns=[c for c in cols if c][:400], rows=rows)
+        except Exception as e:
+            item["error"] = f"can't read: {e}"
+        files.append(item)
+    for name in sorted(os.listdir(d)):
+        if name.lower() == "contact_cleaned.csv" and os.path.isfile(os.path.join(d, name)):
+            p = os.path.join(d, name)
+            size = os.path.getsize(p)
+            files.append({"file": name, "kind": "contacts", "size": size, "size_mb": mb(size),
+                          "chunks": max(1, -(-size // HIST_CHUNK)), "columns": _csv_header(p)[:400]})
+    saved = []
+    jd = os.path.join(d, JSON_DIR)
+    if os.path.isdir(jd):
+        saved = [{"file": e.name, "size_mb": mb(e.stat().st_size), "modified": datetime.fromtimestamp(e.stat().st_mtime).strftime("%Y-%m-%d %H:%M")}
+                 for e in sorted(os.scandir(jd), key=lambda e: e.name.lower()) if e.is_file() and not e.name.endswith(".part")]
+    meta = read_meta(d)
+    return {"job_id": job_id, "client": meta.get("client", ""), "source": source, "has_changed": os.path.isdir(os.path.join(d, CHANGED_DIR)),
+            "files": files, "saved": saved, "json_folder": jd}
+
+
+def t_job_file_chunk(a):
+    """One base64 chunk of a job's output workbook (or 'With changes' copy) or contact_cleaned.csv."""
+    import base64
+    job_id, d = job_dir(a.get("job_id"))
+    name = os.path.basename(str(a.get("file") or "")).strip()
+    if name.lower() == "contact_cleaned.csv":
+        p = os.path.join(d, name)
+    elif name in output_xlsx(_job_base(d, "changed" if a.get("source") == "changed" else "original")):
+        p = os.path.join(_job_base(d, "changed" if a.get("source") == "changed" else "original"), name)
+    else:
+        raise ValueError(f"{name} isn't an output file of job {job_id}.")
+    size = os.path.getsize(p)
+    index = int(a.get("index", 0) or 0)
+    with open(p, "rb") as f:
+        f.seek(index * HIST_CHUNK)
+        raw = f.read(HIST_CHUNK)
+    return {"job_id": job_id, "file": name, "index": index, "chunks": max(1, -(-size // HIST_CHUNK)), "size": size,
+            "data": base64.b64encode(raw).decode("ascii")}
+
+
+def t_save_json_import(a):
+    """Write one base64 chunk of the import.json (or its check report) into the job's 'JSON Import' folder.
+    Chunks come in order 0..total-1; the file only replaces an earlier one once the last chunk is in."""
+    import base64
+    job_id, d = job_dir(a.get("job_id"))
+    name = hist_file_name(a.get("file"))
+    if not name.lower().endswith((".json", ".csv")):
+        raise ValueError("Only .json and .csv files can be saved here.")
+    try:
+        index, total = int(a.get("index", 0)), int(a.get("total", 1))
+    except (TypeError, ValueError):
+        raise ValueError("index and total must be numbers.")
+    if not (0 <= index < total <= 5000):
+        raise ValueError("Bad chunk index.")
+    folder = os.path.join(d, JSON_DIR)
+    os.makedirs(folder, exist_ok=True)
+    part = os.path.join(folder, name + ".part")
+    with open(part, "wb" if index == 0 else "ab") as f:
+        f.write(base64.b64decode(str(a.get("data") or ""), validate=False))
+    out = {"job_id": job_id, "file": name, "index": index, "done": index == total - 1, "folder": folder}
+    if index == total - 1:
+        final = os.path.join(folder, name)
+        os.replace(part, final)
+        out.update(path=final, size_mb=mb(os.path.getsize(final)))
+    return out
+
+
 RO = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False}
 TOOLS = [
     ("bridge_status", "Is the DARVIS bridge running on this PC, and can it load the migration engine? Lists the CRMs.", {}, t_status, RO),
@@ -1624,6 +1724,16 @@ TOOLS = [
      {"run_id": {"type": "string"}, "file": {"type": "string"}, "index": {"type": "integer"}}, t_history_get_chunk, RO),
     ("history_delete", "Delete a saved Contact cleaning run (its folder) from this PC.", {"run_id": {"type": "string"}},
      t_history_delete, {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": False}),
+    ("json_sources", "For the JSON import: a finished job's output workbooks (source original | changed) and contact_cleaned.csv, "
+     "with columns, sizes and chunk counts, plus the files already saved in its 'JSON Import' folder.",
+     {"job_id": {"type": "string"}, "source": {"type": "string", "enum": ["original", "changed"]}}, t_json_sources, RO),
+    ("job_file_chunk", "One base64 chunk of a job's output workbook or contact_cleaned.csv (for the JSON import).",
+     {"job_id": {"type": "string"}, "file": {"type": "string"}, "index": {"type": "integer"},
+      "source": {"type": "string", "enum": ["original", "changed"]}}, t_job_file_chunk, RO),
+    ("save_json_import", "Write one base64 chunk of a JSON import file (.json or its _check.csv) into the job's 'JSON Import' "
+     "folder (chunks in order; replaces the file of the same name when the last chunk is in).",
+     {"job_id": {"type": "string"}, "file": {"type": "string"}, "index": {"type": "integer"}, "total": {"type": "integer"},
+      "data": {"type": "string"}}, t_save_json_import, {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False}),
 ]
 REQUIRED = {"inspect_export": ["path"], "start_migration": ["client", "export_folder", "crm", "matrices"], "job_status": ["job_id"],
             "set_client_name": ["job_id", "client"], "output_columns": ["job_id"], "apply_output_changes": ["job_id", "rules"],
@@ -1631,6 +1741,8 @@ REQUIRED = {"inspect_export": ["path"], "start_migration": ["client", "export_fo
             "find_in_outputs": ["job_id", "value"],
             "history_put_chunk": ["run_id", "file", "index", "total", "data"], "history_get": ["run_id"],
             "history_get_chunk": ["run_id", "file", "index"], "history_delete": ["run_id"],
+            "json_sources": ["job_id"], "job_file_chunk": ["job_id", "file", "index"],
+            "save_json_import": ["job_id", "file", "index", "total", "data"],
             "job_log": ["job_id"], "start_reconciliation": ["job_id"], "reconciliation_report": ["job_id"]}
 HANDLERS = {name: fn for name, _d, _p, fn, _ann in TOOLS}
 
